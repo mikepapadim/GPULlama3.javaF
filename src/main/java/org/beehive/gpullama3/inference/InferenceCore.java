@@ -9,6 +9,7 @@ import org.beehive.gpullama3.inference.weights.standard.Phi3StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen3StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.StandardWeights;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
+import org.beehive.gpullama3.inference.weights.tornado.TornadoWeightsQ8;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
@@ -582,7 +583,7 @@ public final class InferenceCore {
      */
     public static FloatArray forwardTornadoVM(Model model, State state, int token, int position, TornadoVMMasterPlan tornadoVMMasterPlan) {
         final Configuration configuration = model.configuration();
-        final TornadoWeights weights = (TornadoWeights) model.weights();
+        final TornadoWeightsQ8 weights = (TornadoWeightsQ8) model.weights();
 
         MemorySegment.copy(weights.tokenEmbeddingTable.getSegment(), token * configuration.dim() * Float.BYTES, state.wrapX.getSegment(), 0, configuration.dim() * Float.BYTES);
 

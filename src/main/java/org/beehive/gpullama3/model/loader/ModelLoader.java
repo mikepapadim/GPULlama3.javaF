@@ -15,6 +15,7 @@ import org.beehive.gpullama3.inference.operation.RoPE;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.inference.weights.standard.LlamaStandardWeights;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
+import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeightsQ8;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.ModelType;
@@ -23,7 +24,9 @@ import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
 
+import javax.swing.plaf.PanelUI;
 import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
@@ -51,6 +54,11 @@ public abstract class ModelLoader {
         String name = (String) metadata.get("general.name");
         String tokenizerModel = (String) metadata.get("tokenizer.ggml.model");
         Integer vocabSize = (Integer) metadata.get("llama.vocab_size");
+
+        System.out.println("general.name = " + name);
+        System.out.println("tokenizer.ggml.model = " + tokenizerModel);
+        System.out.println("llama.vocab_size = " + vocabSize);
+
 
         // Check by name first
         if (name != null) {
@@ -108,6 +116,14 @@ public abstract class ModelLoader {
         HalfFloatArray[] array = new HalfFloatArray[size];
         for (int i = 0; i < size; i++) {
             array[i] = loadTensorAsHalfFloatArray(getTensorEntry.apply(i));
+        }
+        return array;
+    }
+
+    public static Int8Array[] loadArrayAsInt8(int size,  IntFunction<GGMLTensorEntry> getTensorEntry) {
+        Int8Array[] array = new Int8Array[size];
+        for (int i = 0; i < size; i++) {
+            array[i] = Int8Array.fromSegment(getTensorEntry.apply(i).memorySegment());
         }
         return array;
     }
@@ -173,6 +189,16 @@ public abstract class ModelLoader {
         }
     }
 
+    public static Int8Array loadTensorAsInt8Array(GGMLTensorEntry entry) {
+        if (entry.ggmlType() == GGMLType.F32) {
+            System.out.println("Loading F32 tensor as Int8Array");
+            return null;
+        } else {
+            Int8Array array = Int8Array.fromSegment(entry.memorySegment());
+            return array;
+        }
+    }
+
     public static FloatTensor[] loadArrayOfQuantized(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
         FloatTensor[] array = new FloatTensor[size];
         for (int i = 0; i < size; i++) {
@@ -226,7 +252,7 @@ public abstract class ModelLoader {
             if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
                 System.out.println("Loading model weights in TornadoVM format (loading " + outputWeight.ggmlType() + " -> " + GGMLType.F16 + ")");
             }
-            return createTornadoVMWeights(tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
+            return createTornadoVMWeightsQ8(tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
         } else {
             return createStandardWeights(tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
         }
@@ -234,6 +260,7 @@ public abstract class ModelLoader {
 
     public Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
             GGMLTensorEntry outputWeight) {
+
         return new LlamaTornadoWeights(
                 // Load directly to TornadoVM format
                 loadTensorAsFloatArray(tokenEmbeddings), loadArrayAsFloatArrayFromBuffer(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
@@ -246,6 +273,24 @@ public abstract class ModelLoader {
                 loadArrayAsHalfFloatArray(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
                 loadArrayAsHalfFloatArray(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_up.weight")), floatBufferToFloatArray(tensorEntries.get("output_norm.weight")),
                 FloatArray.fromArray(ropeFreqs.first()), FloatArray.fromArray(ropeFreqs.second()), loadTensorAsHalfFloatArray(outputWeight), outputWeight.ggmlType()) {
+        };
+    }
+
+    public Weights createTornadoVMWeightsQ8(Map<String, GGMLTensorEntry> tensorEntries, Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
+            GGMLTensorEntry outputWeight) {
+
+        return new LlamaTornadoWeightsQ8(
+                // Load directly to TornadoVM format
+                loadTensorAsFloatArray(tokenEmbeddings), loadArrayAsFloatArrayFromBuffer(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
+                loadArrayAsInt8(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
+                loadArrayAsInt8(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
+                loadArrayAsInt8(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
+                loadArrayAsInt8(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
+                loadArrayAsFloatArrayFromBuffer(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
+                loadArrayAsInt8(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
+                loadArrayAsInt8(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
+                loadArrayAsInt8(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_up.weight")), floatBufferToFloatArray(tensorEntries.get("output_norm.weight")),
+                FloatArray.fromArray(ropeFreqs.first()), FloatArray.fromArray(ropeFreqs.second()), loadTensorAsInt8Array(outputWeight), outputWeight.ggmlType()) {
         };
     }
 

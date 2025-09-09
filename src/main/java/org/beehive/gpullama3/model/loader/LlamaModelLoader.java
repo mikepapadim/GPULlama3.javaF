@@ -49,6 +49,9 @@ public class LlamaModelLoader extends ModelLoader {
             Weights weights = null;
             if (loadWeights) {
                 Map<String, GGMLTensorEntry> tensorEntries = GGUF.loadTensors(fileChannel, gguf.getTensorDataOffset(), gguf.getTensorInfos());
+                System.out.println("Loaded " + tensorEntries.size() + " tensors");
+                System.out.println("Loading weights...");
+                System.out.println();
                 weights = loadWeights(tensorEntries, config);
             }
             return new Llama(config, tokenizer, weights, ChatFormat.create(tokenizer, null));

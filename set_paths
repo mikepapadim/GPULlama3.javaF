@@ -6,7 +6,7 @@
 
 # Resolve root of this project (LLaMA3) and TornadoVM
 export LLAMA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export TORNADO_ROOT="${LLAMA_ROOT}/external/tornadovm"
+#export TORNADO_ROOT="${LLAMA_ROOT}/external/tornadovm"
 
 # Set the path to TornadoVM SDK binaries
 export TORNADO_SDK="${TORNADO_ROOT}/bin/sdk"

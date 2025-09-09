@@ -26,7 +26,8 @@ import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.util.Map;
 
-public class Phi3ModelLoader extends ModelLoader {
+public class
+Phi3ModelLoader extends ModelLoader {
     public Phi3ModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights) {
         super(fileChannel, gguf, contextLength, loadWeights);
     }

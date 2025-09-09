@@ -80,6 +80,7 @@ public enum GGMLType {
         assert typeSize > 0;
         assert isPowerOf2(blockSize);
         this.typeSize = typeSize;
+        System.out.println("GGMLType: " + this + " blockSize: " + blockSize);
         this.blockSize = blockSize;
     }
 
