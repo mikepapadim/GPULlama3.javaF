@@ -134,66 +134,35 @@ public class Qwen2TornadoVMLayerPlanner extends TornadoVMLayerPlanner<Qwen2State
         return setupTornadoForwardPlanLayered();
     }
 
+    /**
+     * Sets up the grid scheduler configuration for Qwen2 model on non-NVIDIA GPUs.
+     * Qwen2 has additional bias workers (qbias, kbias, vbias) and uses a 2D RoPE worker.
+     *
+     * @return GridScheduler configured with Qwen2-specific worker grids
+     */
     private GridScheduler setupQwen2GridSchedulersLayeredNonNvidia() {
-        //throw new UnsupportedOperationException("setupQwen2GridSchedulersLayeredNonNvidia Not supported yet.");
-        GridScheduler tornadoForwardScheduler = new GridScheduler();
+        // Qwen2-specific: 2D RoPE worker (numberOfHeads x headSize/2)
+        WorkerGrid ropeWorker2D = GridSchedulerBuilder.createWorker2D(
+                config.numberOfHeads(),
+                config.headSize() / 2,
+                1, 1
+        );
 
-        // Single worker for tasks running with a single thread
-        // OpenCL equivalent: clEnqueueNDRangeKernel(globalWorkSize=[1,1,1], localWorkSize=[1,1,1])
-        // CUDA equivalent: kernel<<<dim3(1,1,1), dim3(1,1,1)>>>
-        WorkerGrid singleWorker = new WorkerGrid1D(1);
-        singleWorker.setGlobalWork(1, 1, 1);
-        singleWorker.setLocalWork(1, 1, 1);
+        // Qwen2-specific: Q bias worker
+        WorkerGrid qBiasWorker = GridSchedulerBuilder.createWorker1D(
+                config.dim(),
+                config.dim() / 8
+        );
 
-        // config.dim / 2 Worker for RoPE
-        // OpenCL equivalent: clEnqueueNDRangeKernel(globalWorkSize=[config.dim/2,1,1], localWorkSize=[128,1,1])
-        // CUDA equivalent: kernel<<<dim3((config.dim/2+127)/128,1,1), dim3(128,1,1)>>>
-        int h = config.numberOfHeads();
-        int ic = config.headSize() / 2;
-        WorkerGrid ropeWorker = new WorkerGrid2D(h, ic);
-        ropeWorker.setGlobalWork(h, ic, 1);
-        ropeWorker.setLocalWork(1, 1, 1);
+        // Qwen2-specific: K/V bias worker
+        WorkerGrid kvBiasWorker = GridSchedulerBuilder.createWorker1D(
+                config.kvDim(),
+                32
+        );
 
-        // config.dim Worker for Row major access
-        // OpenCL equivalent: clEnqueueNDRangeKernel(globalWorkSize=[config.dim*LOCAL_WORK_GROUP_SIZE_ALLOC,1,1], localWorkSize=[LOCAL_WORK_GROUP_SIZE_ALLOC,1,1])
-        // CUDA equivalent: kernel<<<dim3(config.dim,1,1), dim3(LOCAL_WORK_GROUP_SIZE_ALLOC,1,1)>>>
-        int configDimRowMajorGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
-        WorkerGrid configDimRowMajorGlobalWorker = new WorkerGrid1D(configDimRowMajorGlobal);
-        configDimRowMajorGlobalWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC, 1, 1);
-
-        // config.kvDim Worker for Row major access
-        // OpenCL equivalent: clEnqueueNDRangeKernel(globalWorkSize=[config.kvDim*LOCAL_WORK_GROUP_SIZE_ALLOC,1,1], localWorkSize=[LOCAL_WORK_GROUP_SIZE_ALLOC,1,1])
-        // CUDA equivalent: kernel<<<dim3(config.kvDim,1,1), dim3(LOCAL_WORK_GROUP_SIZE_ALLOC,1,1)>>>
-        int configKvDimRowMajorGlobal = config.kvDim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
-        WorkerGrid configKvDimRowMajorGlobalWorker = new WorkerGrid1D(configKvDimRowMajorGlobal);
-        configKvDimRowMajorGlobalWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC, 1, 1);
-
-        WorkerGrid qBiasWorker = new WorkerGrid1D(config.dim());
-        qBiasWorker.setGlobalWork(config.dim(), 1, 1);
-        qBiasWorker.setLocalWork(config.dim() / 8, 1, 1);
-        WorkerGrid kvBiasWorker = new WorkerGrid1D(config.kvDim());
-        kvBiasWorker.setGlobalWork(config.kvDim(), 1, 1);
-        kvBiasWorker.setLocalWork(32, 1, 1);
-
-        // config.hiddenDim * 32 Worker for Row major access
-        // OpenCL equivalent: clEnqueueNDRangeKernel(globalWorkSize=[config.hiddenDim*LOCAL_WORK_GROUP_SIZE_ALLOC,1,1], localWorkSize=[LOCAL_WORK_GROUP_SIZE_ALLOC,1,1])
-        // CUDA equivalent: kernel<<<dim3(config.hiddenDim,1,1), dim3(LOCAL_WORK_GROUP_SIZE_ALLOC,1,1)>>>
-        int configHiddenDimRowMajor = config.hiddenDim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
-        WorkerGrid configHiddenDimRowMajorWorker = new WorkerGrid1D(configHiddenDimRowMajor);
-        configHiddenDimRowMajorWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC, 1, 1);
-
-        // RMSNorm worker configuration
-        // OpenCL equivalent: clEnqueueNDRangeKernel(globalWorkSize=[config.dim,1,1], localWorkSize=[256,1,1])
-        // CUDA equivalent: kernel<<<dim3((config.dim+255)/256,1,1), dim3(256,1,1)>>>
-        WorkerGrid rmsNormWorker = new WorkerGrid1D(config.dim());
-        rmsNormWorker.setGlobalWork(config.dim(), 1, 1);  // Set global work size to total dimension
-        rmsNormWorker.setLocalWork(32, 1, 1);         // Set local work size to 256 (standard efficient size)
-
-        // Parallel attention worker configuration
-        // Calculate optimal local work size based on head dimension
-        int optimalLocalSize = Math.min(config.headSize(), 64); // Start with 64 threads per head
+        // Qwen2-specific: Optimal attention worker (find best divisor)
+        int optimalLocalSize = Math.min(config.headSize(), 64);
         if (config.headSize() % optimalLocalSize != 0) {
-            // Find largest divisor of headSize <= 64
             for (int size = 64; size >= 1; size--) {
                 if (config.headSize() % size == 0) {
                     optimalLocalSize = size;
@@ -201,50 +170,70 @@ public class Qwen2TornadoVMLayerPlanner extends TornadoVMLayerPlanner<Qwen2State
                 }
             }
         }
+        WorkerGrid attentionWorker = GridSchedulerBuilder.createWorker1D(
+                config.numberOfHeads() * optimalLocalSize,
+                optimalLocalSize
+        );
 
-        WorkerGrid parallelAttentionWorker = new WorkerGrid1D(config.numberOfHeads());
-        parallelAttentionWorker.setGlobalWork(config.numberOfHeads() * optimalLocalSize, 1, 1);
-        parallelAttentionWorker.setLocalWork(optimalLocalSize, 1, 1);
+        // Qwen2-specific: Custom copy worker with local size 32
+        WorkerGrid copyWorker = GridSchedulerBuilder.createWorker1D(
+                config.kvDim(),
+                32
+        );
 
-        // Copy to caches worker configuration
-        // OpenCL equivalent: clEnqueueNDRangeKernel(globalWorkSize=[config.dim,1,1], localWorkSize=[128,1,1])
-        // CUDA equivalent: kernel<<<dim3((config.dim+127)/128,1,1), dim3(128,1,1)>>>
-        WorkerGrid copyToCachesWorker = new WorkerGrid1D(config.kvDim());
-        copyToCachesWorker.setGlobalWork(config.kvDim(), 1, 1);
-        copyToCachesWorker.setLocalWork(32, 1, 1); // Set local work size to 32 (for copying to caches)
+        // Build scheduler with common workers (using local size 32 for RMS norm)
+        // and override specific workers for Qwen2
+        GridScheduler scheduler = new GridScheduler();
 
-        // Map workers to tasks
-        tornadoForwardScheduler.addWorkerGrid("activationUpdate.updateX", singleWorker);
+        // Add single worker
+        new GridSchedulerBuilder(config, 32)
+                .addSingleWorker();
+
+        // Manually add all workers since we need custom versions
+        WorkerGrid singleWorker = GridSchedulerBuilder.createWorker1D(1, 1);
+        scheduler.addWorkerGrid("activationUpdate.updateX", singleWorker);
+
+        // Add dimension workers
+        int configDimGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
+        WorkerGrid configDimWorker = GridSchedulerBuilder.createWorker1D(configDimGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        int configKvDimGlobal = config.kvDim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
+        WorkerGrid configKvDimWorker = GridSchedulerBuilder.createWorker1D(configKvDimGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        int configHiddenDimGlobal = config.hiddenDim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
+        WorkerGrid configHiddenDimWorker = GridSchedulerBuilder.createWorker1D(configHiddenDimGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        // RMS norm worker with local size 32
+        WorkerGrid rmsNormWorker = GridSchedulerBuilder.createWorker1D(config.dim(), 32);
+
+        // Register for all layers
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qmatmul", configDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kmatmul", configKvDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vmatmul", configKvDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qbias", qBiasWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kbias", kvBiasWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vbias", kvBiasWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope", ropeWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", configHiddenDimRowMajorWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".qmatmul", configDimWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".kmatmul", configKvDimWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".vmatmul", configKvDimWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".qbias", qBiasWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".kbias", kvBiasWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".vbias", kvBiasWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".rope", ropeWorker2D);  // Custom 2D worker
+            scheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", configHiddenDimWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
+            scheduler.addWorkerGrid("layer_" + i + ".parallel-attention", attentionWorker);  // Custom optimal worker
+            scheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyWorker);  // Custom copy worker
         }
 
-        // Vocabulary worker configuration
-        // OpenCL equivalent: clEnqueueNDRangeKernel(globalWorkSize=[config.vocabularySize,1,1], localWorkSize=[16,1,1])
-        // CUDA equivalent: kernel<<<dim3((config.vocabularySize+15)/16,1,1), dim3(16,1,1)>>>
-        int vocabSizeRowMajor = config.vocabularySize() * LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
-        WorkerGrid vocabWorker = new WorkerGrid1D(vocabSizeRowMajor);
-        vocabWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS, 1, 1);
+        // Vocabulary worker
+        int vocabGlobal = config.vocabularySize() * LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
+        WorkerGrid vocabWorker = GridSchedulerBuilder.createWorker1D(vocabGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
 
-        tornadoForwardScheduler.addWorkerGrid("logits.projection", vocabWorker);
-        tornadoForwardScheduler.addWorkerGrid("logits.reductionsOneBlockLogits", rmsNormWorker);
-        tornadoForwardScheduler.addWorkerGrid("logits.mapContextLogits", rmsNormWorker);
+        scheduler.addWorkerGrid("logits.projection", vocabWorker);
+        scheduler.addWorkerGrid("logits.reductionsOneBlockLogits", rmsNormWorker);
+        scheduler.addWorkerGrid("logits.mapContextLogits", rmsNormWorker);
 
-        return tornadoForwardScheduler;
+        return scheduler;
     }
 }
