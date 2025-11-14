@@ -1,0 +1,78 @@
+name: Sync Version Across Files
+
+on:
+  # Trigger when pom.xml is modified
+  push:
+    branches:
+      - main
+    paths:
+      - 'pom.xml'
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from pom.xml
+        id: extract-version
+        run: |
+          VERSION=$(grep -oP '<version>\K[^<]+' pom.xml | head -1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Run version update script
+        run: |
+          chmod +x scripts/update-version.sh
+          ./scripts/update-version.sh
+
+      - name: Check for changes
+        id: check-changes
+        run: |
+          if git diff --quiet; then
+            echo "changes=false" >> $GITHUB_OUTPUT
+            echo "No version changes detected"
+          else
+            echo "changes=true" >> $GITHUB_OUTPUT
+            echo "Version changes detected"
+          fi
+
+      - name: Commit and push changes
+        if: steps.check-changes.outputs.changes == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git commit -m "chore: sync version to ${{ steps.extract-version.outputs.version }}
+
+          Automatically updated version references in:
+          - CITATION.cff
+          - README.md
+          - scripts/all.sh"
+          git push
+
+      - name: Summary
+        if: steps.check-changes.outputs.changes == 'true'
+        run: |
+          echo "✅ Successfully synced version ${{ steps.extract-version.outputs.version }} across all files"
+          echo ""
+          echo "Updated files:"
+          echo "  - CITATION.cff"
+          echo "  - README.md"
+          echo "  - scripts/all.sh"
+
+      - name: No changes summary
+        if: steps.check-changes.outputs.changes == 'false'
+        run: |
+          echo "ℹ️ All files are already in sync with version ${{ steps.extract-version.outputs.version }}"
