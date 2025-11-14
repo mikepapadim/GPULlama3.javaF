@@ -1,0 +1,89 @@
+name: Notify LangChain4j of New Release
+
+on:
+  release:
+    types: [published]
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to notify about'
+        required: true
+        default: '0.2.2'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  notify-langchain4j:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          # Remove 'v' prefix if present
+          VERSION=${VERSION#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Notifying about version: $VERSION"
+
+      - name: Create issue in langchain4j
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const version = '${{ steps.version.outputs.version }}';
+            const issueTitle = `Update gpu-llama3 dependency to ${version}`;
+            const issueBody = `## New GPU-Llama3 Version Available
+
+            A new version of \`gpu-llama3\` has been released: **${version}**
+
+            ### Current Version
+            - \`langchain4j-gpu-llama3/pom.xml\`: 0.2.2
+
+            ### Suggested Update
+            \`\`\`xml
+            <dependency>
+                <groupId>io.github.beehive-lab</groupId>
+                <artifactId>gpu-llama3</artifactId>
+                <version>${version}</version>
+            </dependency>
+            \`\`\`
+
+            ### Release Information
+            - Release URL: https://github.com/${{ github.repository }}/releases/tag/v${version}
+            - Maven Central: https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3/${version}
+
+            ### Automated Notification
+            This issue was automatically created by the GPULlama3 release workflow.
+            `;
+
+            try {
+              await github.rest.issues.create({
+                owner: 'langchain4j',
+                repo: 'langchain4j',
+                title: issueTitle,
+                body: issueBody,
+                labels: ['enhancement', 'dependencies']
+              });
+              console.log('Successfully created issue in langchain4j/langchain4j');
+            } catch (error) {
+              console.log('Note: Creating issue requires a PAT with repo permissions for langchain4j/langchain4j');
+              console.log('Error:', error.message);
+            }
+
+      - name: Summary
+        run: |
+          echo "✅ Notification process completed for version ${{ steps.version.outputs.version }}"
+          echo ""
+          echo "📝 Note: To create issues in langchain4j/langchain4j, you need to:"
+          echo "1. Create a GitHub Personal Access Token (PAT) with 'public_repo' scope"
+          echo "2. Add it as a secret named LANGCHAIN4J_PAT in this repository"
+          echo "3. Update the workflow to use secrets.LANGCHAIN4J_PAT instead of secrets.GITHUB_TOKEN"

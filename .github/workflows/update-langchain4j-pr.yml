@@ -1,0 +1,153 @@
+name: Auto-Update LangChain4j Dependency
+
+on:
+  release:
+    types: [published]
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to update to'
+        required: true
+        default: '0.2.2'
+
+permissions:
+  contents: read
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          # Remove 'v' prefix if present
+          VERSION=${VERSION#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Processing version: $VERSION"
+
+      - name: Checkout langchain4j repository
+        uses: actions/checkout@v4
+        with:
+          repository: langchain4j/langchain4j
+          token: ${{ secrets.LANGCHAIN4J_PAT }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create update branch
+        id: branch
+        run: |
+          BRANCH_NAME="update-gpu-llama3-${{ steps.version.outputs.version }}"
+          echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          git checkout -b "$BRANCH_NAME"
+
+      - name: Update gpu-llama3 version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          POM_FILE="langchain4j-gpu-llama3/pom.xml"
+
+          if [ ! -f "$POM_FILE" ]; then
+            echo "Error: $POM_FILE not found"
+            exit 1
+          fi
+
+          # Update the version using perl for cross-platform compatibility
+          perl -i -pe "s|(<groupId>io\.github\.beehive-lab</groupId>\s*<artifactId>gpu-llama3</artifactId>\s*<version>)[^<]+(</version>)|\${1}${VERSION}\${2}|s" "$POM_FILE"
+
+          echo "Updated $POM_FILE to version $VERSION"
+
+          # Verify the change
+          if grep -q "<version>$VERSION</version>" "$POM_FILE"; then
+            echo "✅ Version successfully updated"
+          else
+            echo "❌ Version update failed"
+            exit 1
+          fi
+
+      - name: Commit changes
+        run: |
+          git add langchain4j-gpu-llama3/pom.xml
+          git commit -m "chore: update gpu-llama3 dependency to ${{ steps.version.outputs.version }}
+
+          Updates gpu-llama3 from io.github.beehive-lab to version ${{ steps.version.outputs.version }}.
+
+          Release notes: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}
+
+          This PR was automatically created by the GPULlama3 release workflow."
+
+      - name: Push changes
+        run: |
+          git push origin "${{ steps.branch.outputs.branch }}"
+
+      - name: Create Pull Request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.LANGCHAIN4J_PAT }}
+          script: |
+            const version = '${{ steps.version.outputs.version }}';
+            const prTitle = `Update gpu-llama3 dependency to ${version}`;
+            const prBody = `## Description
+
+            This PR updates the \`gpu-llama3\` dependency to version **${version}**.
+
+            ## Changes
+            - Updated \`langchain4j-gpu-llama3/pom.xml\`
+            - New version: \`${version}\`
+
+            ## Release Information
+            - 📦 Release: https://github.com/${{ github.repository }}/releases/tag/v${version}
+            - 🔗 Maven Central: https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3/${version}
+
+            ## Testing
+            - [ ] Build succeeds with new version
+            - [ ] Existing tests pass
+            - [ ] GPU-accelerated inference works correctly
+
+            ## Notes
+            This PR was automatically created by the GPULlama3 release automation workflow.
+
+            ---
+            🤖 Automated PR created by [GPULlama3 Release Workflow](https://github.com/${{ github.repository }})
+            `;
+
+            const { data: pr } = await github.rest.pulls.create({
+              owner: 'langchain4j',
+              repo: 'langchain4j',
+              title: prTitle,
+              head: '${{ steps.branch.outputs.branch }}',
+              base: 'main',
+              body: prBody,
+              maintainer_can_modify: true
+            });
+
+            console.log(`✅ Pull request created: ${pr.html_url}`);
+
+            // Add labels
+            await github.rest.issues.addLabels({
+              owner: 'langchain4j',
+              repo: 'langchain4j',
+              issue_number: pr.number,
+              labels: ['dependencies', 'enhancement', 'automated']
+            });
+
+      - name: Summary
+        run: |
+          echo "✅ Successfully created PR to update gpu-llama3 to ${{ steps.version.outputs.version }}"
+          echo ""
+          echo "📋 Setup Instructions (if not already configured):"
+          echo "1. Create a GitHub Personal Access Token (classic) with these scopes:"
+          echo "   - public_repo (or repo for private repos)"
+          echo "   - workflow"
+          echo "2. Add it as a repository secret named LANGCHAIN4J_PAT"
+          echo "3. The token should be from an account with fork/PR permissions for langchain4j/langchain4j"
