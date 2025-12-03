@@ -48,6 +48,7 @@
             int fusedQKVRows = config.dim() + 2 * config.kvDim();
             int fusedQKVGlobal = fusedQKVRows * LOCAL_WORK_GROUP_SIZE_ALLOC;
             WorkerGrid fusedQKVWorker = WorkerGridFactory.genericWorker(fusedQKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
+            WorkerGrid ropeWithCacheWorker = WorkerGridFactory.genericWorker(config.dim() / 2, 128);
 
             // Map workers to tasks
             for (int i = 0; i < config.numberOfLayers(); i++) {
@@ -56,7 +57,7 @@
                 //                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qmatmul", configDimRowMajorGlobalWorker);
 //                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kmatmul", configKvDimRowMajorGlobalWorker);
 //                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vmatmul", configKvDimRowMajorGlobalWorker);
-                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope", ropeWorker);
+//                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope", ropeWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", configHiddenDimRowMajorWorker);
@@ -66,7 +67,9 @@
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".quantizeXb", rmsNormWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
-                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
+//                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
+                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ropeWithCache", ropeWithCacheWorker);
+
             }
             return tornadoForwardScheduler;
         }
@@ -144,8 +147,20 @@
 //                .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapQ, weights.wqLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
 //                .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapK, weights.wkLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
 //                .task("vmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapV, weights.wvLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("rope", TransformerComputeKernelsLayered::ropeRotation, context, state.positionHolder, state.wrapQ, state.wrapK, config.kvDim(), config.headSize())
-                .task("copyToCaches", TransformerComputeKernelsLayered::copyToCache, state.wrapKeyCache, state.wrapK, state.wrapValueCache, state.wrapV, state.positionHolder, config.kvDim(), layerIndex, config.contextLength());
+//                .task("rope", TransformerComputeKernelsLayered::ropeRotation, context, state.positionHolder, state.wrapQ, state.wrapK, config.kvDim(), config.headSize())
+//                .task("copyToCaches", TransformerComputeKernelsLayered::copyToCache, state.wrapKeyCache, state.wrapK, state.wrapValueCache, state.wrapV, state.positionHolder, config.kvDim(), layerIndex, config.contextLength());
+                .task("ropeWithCache", TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
+                    context,
+                    state.positionHolder,
+                    state.wrapQ,                // Q (in/out)
+                    state.wrapK,                // K (in/out)
+                    state.wrapV,                // V (in only)
+                    state.wrapKeyCache,         // Key cache (out)
+                    state.wrapValueCache,       // Value cache (out)
+                    config.kvDim(),
+                    config.headSize(),
+                    layerIndex,
+                    config.contextLength());
                 configureAttention(unifiedLayer, layerIndex);
                 unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapXb, state.wrapX, weights.woLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
