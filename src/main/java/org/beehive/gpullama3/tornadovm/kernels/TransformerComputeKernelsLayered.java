@@ -759,6 +759,26 @@ public class TransformerComputeKernelsLayered {
         }
     }
 
+    public static void matrixVectorGenericWithResidual(KernelContext context, HalfFloatArray x, FloatArray hb, HalfFloatArray w, int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = localWorkGroupSize;
+
+        // Early exit if this workgroup is beyond our output dimension
+        if (rowId >= d) {
+            return;
+        }
+
+        float sum = matrixVectorRowMajorOptimized(context, localSize, x, w, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float result = hb.get(rowId) + sum;
+            hb.set(rowId, result);
+        }
+    }
+
     /**
      * Fused feed-forward network with SiLU activation and GLU gating. Implements the SwiGLU variant used in LLaMA-style models.
      *
