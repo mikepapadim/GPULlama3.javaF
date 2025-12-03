@@ -44,11 +44,18 @@
 
             WorkerGrid parallelAttentionWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), config.headSize());
             WorkerGrid copyToCachesWorker = WorkerGridFactory.genericWorker(config.dim(), 128);
+
+            int fusedQKVRows = config.dim() + 2 * config.kvDim();
+            int fusedQKVGlobal = fusedQKVRows * LOCAL_WORK_GROUP_SIZE_ALLOC;
+            WorkerGrid fusedQKVWorker = WorkerGridFactory.genericWorker(fusedQKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
+
             // Map workers to tasks
             for (int i = 0; i < config.numberOfLayers(); i++) {
-                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qmatmul", configDimRowMajorGlobalWorker);
-                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kmatmul", configKvDimRowMajorGlobalWorker);
-                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vmatmul", configKvDimRowMajorGlobalWorker);
+                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fusedQKV", fusedQKVWorker);
+
+                //                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qmatmul", configDimRowMajorGlobalWorker);
+//                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kmatmul", configKvDimRowMajorGlobalWorker);
+//                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vmatmul", configKvDimRowMajorGlobalWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope", ropeWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
@@ -84,8 +91,8 @@
         }
 
         List<ImmutableTaskGraph> setupFFNLayered() {
-            state.temp.init(0.0f);
-            state.tempFFN.init(0.0f);
+//            state.temp.init(0.0f);
+//            state.tempFFN.init(0.0f);
     //        state.wrapXbFP16.clear();
 
             var numLayers = config.numberOfLayers();
@@ -115,33 +122,40 @@
                     weights.w3Layered[layerIndex].asHalfFloatArray());
             unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
             unifiedLayer
-                    .task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
-                    if (shouldUseFinalNormalization()) {
-                        unifiedLayer.task("reductionFinalNormalization", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.temp,
-                                config.dim(), config.rmsNormEps());
-                    }
-                    unifiedLayer.task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
-                    .task("quantizeXb", TransformerComputeKernels::convertFP32toFP16v2, context, state.wrapXb, state.wrapXbFP16)
-                    .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapQ, weights.wqLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
-                    .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapK, weights.wkLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(),
+                .task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
+                if (shouldUseFinalNormalization()) {
+                    unifiedLayer.task("reductionFinalNormalization", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.temp,
+                            config.dim(), config.rmsNormEps());
+                }
+            unifiedLayer.task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
+                .task("quantizeXb", TransformerComputeKernels::convertFP32toFP16v2, context, state.wrapXb, state.wrapXbFP16)
+                    .task("fusedQKV", TransformerComputeKernelsLayered::fusedQKVMatmulX,
+                            context,
+                            state.wrapXbFP16,                                    // input (FP16)
+                            state.wrapQ,                                         // output Q
+                            state.wrapK,                                         // output K
+                            state.wrapV,                                         // output V
+                            weights.wqLayered[layerIndex].asHalfFloatArray(),    // Wq
+                            weights.wkLayered[layerIndex].asHalfFloatArray(),    // Wk
+                            weights.wvLayered[layerIndex].asHalfFloatArray(),    // Wv
+                            config.dim(),                                        // dim
+                            config.kvDim(),                                      // kvDim
                             LOCAL_WORK_GROUP_SIZE_ALLOC)
-                    .task("vmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapV, weights.wvLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(),
-                            LOCAL_WORK_GROUP_SIZE_ALLOC)
-                    .task("rope", TransformerComputeKernelsLayered::ropeRotation, context, state.positionHolder, state.wrapQ, state.wrapK, config.kvDim(), config.headSize())
-                    .task("copyToCaches", TransformerComputeKernelsLayered::copyToCache, state.wrapKeyCache, state.wrapK, state.wrapValueCache, state.wrapV, state.positionHolder, config.kvDim(),
-                            layerIndex, config.contextLength());
-                    configureAttention(unifiedLayer, layerIndex);
-                    unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapXb, state.wrapX, weights.woLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(),
-                            LOCAL_WORK_GROUP_SIZE_ALLOC)
-                    .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
-                    if (shouldUseFinalNormalization()) {
-                        unifiedLayer.task("reductionFinalNormalizationFFN", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempFFN, config.dim(), config.rmsNormEps());
-                    }
-                    unifiedLayer.task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN)
-                    .task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context, state.wrapXb, state.wrapHb, weights.w1Layered[layerIndex].asHalfFloatArray(),
-                            weights.w3Layered[layerIndex].asHalfFloatArray(), config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
-                    .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapHb, state.wrapX, weights.w2Layered[layerIndex].asHalfFloatArray(), config.hiddenDim(),
-                            config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC).persistOnDevice(state.wrapX);
+//                .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapQ, weights.wqLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+//                .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapK, weights.wkLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+//                .task("vmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXbFP16, state.wrapV, weights.wvLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .task("rope", TransformerComputeKernelsLayered::ropeRotation, context, state.positionHolder, state.wrapQ, state.wrapK, config.kvDim(), config.headSize())
+                .task("copyToCaches", TransformerComputeKernelsLayered::copyToCache, state.wrapKeyCache, state.wrapK, state.wrapValueCache, state.wrapV, state.positionHolder, config.kvDim(), layerIndex, config.contextLength());
+                configureAttention(unifiedLayer, layerIndex);
+                unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapXb, state.wrapX, weights.woLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
+                if (shouldUseFinalNormalization()) {
+                    unifiedLayer.task("reductionFinalNormalizationFFN", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempFFN, config.dim(), config.rmsNormEps());
+                }
+                unifiedLayer.task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN)
+                .task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context, state.wrapXb, state.wrapHb, weights.w1Layered[layerIndex].asHalfFloatArray(), weights.w3Layered[layerIndex].asHalfFloatArray(), config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapHb, state.wrapX, weights.w2Layered[layerIndex].asHalfFloatArray(), config.hiddenDim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .persistOnDevice(state.wrapX); //
             return unifiedLayer;
         }
 
