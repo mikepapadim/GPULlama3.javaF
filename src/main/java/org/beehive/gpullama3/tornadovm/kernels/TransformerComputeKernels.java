@@ -29,6 +29,19 @@ public class TransformerComputeKernels {
         output.set(i,val);
     }
 
+    public static void mapContextWithQuantize(
+            KernelContext context,
+            HalfFloatArray outputFP16,    // Direct FP16 output
+            FloatArray x,
+            FloatArray weights,
+            FloatArray temp) {
+
+        int gid = context.globalIdx;
+        float ss = temp.get(0);
+        float result = weights.get(gid) * (ss * x.get(gid));
+        outputFP16.set(gid, new HalfFloat(result));
+    }
+
     /**
      * Performs RMS (Root Mean Square) normalization using parallel reduction.
      * This is a two-phase reduction: first within work groups, then across work groups.

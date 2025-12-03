@@ -965,6 +965,8 @@ public class TransformerComputeKernelsLayered {
      * @param localWorkGroupSize
      *         Work group size
      */
+
+
     public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, FloatArray x, FloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
         int rowId = context.groupIdx;

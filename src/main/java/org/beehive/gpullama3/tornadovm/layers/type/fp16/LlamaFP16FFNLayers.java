@@ -62,9 +62,9 @@
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", configHiddenDimRowMajorWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
+//                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".quantizeXb", rmsNormWorker);
+                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextQuantized", rmsNormWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
                 tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
 //                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
@@ -130,8 +130,11 @@
                     unifiedLayer.task("reductionFinalNormalization", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.temp,
                             config.dim(), config.rmsNormEps());
                 }
-            unifiedLayer.task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
-                .task("quantizeXb", TransformerComputeKernels::convertFP32toFP16v2, context, state.wrapXb, state.wrapXbFP16)
+              unifiedLayer.task("mapContextQuantized", TransformerComputeKernels::mapContextWithQuantize,
+                    context, state.wrapXbFP16, state.wrapX,
+                    weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
+//            unifiedLayer.task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
+//                .task("quantizeXb", TransformerComputeKernels::convertFP32toFP16v2, context, state.wrapXb, state.wrapXbFP16)
                     .task("fusedQKV", TransformerComputeKernelsLayered::fusedQKVMatmulX,
                             context,
                             state.wrapXbFP16,                                    // input (FP16)
