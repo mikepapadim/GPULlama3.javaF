@@ -4,7 +4,10 @@ import org.beehive.gpullama3.tensor.GGMLTensorEntry;
 import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
-import uk.ac.manchester.tornado.api.types.arrays.*;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
+import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -19,11 +22,26 @@ public class Q8_0TornadoTensor extends TornadoTensor {
     private final Int8Array quants;       // Quantized int8 values
     private MemorySegment segment;
 
+    private final ByteArray tornadoNativeArray;
+
     public Q8_0TornadoTensor(int size, HalfFloatArray scales, Int8Array quants, MemorySegment segment) {
         this.size = size;
         this.scales = scales;
         this.quants = quants;
         this.segment = segment;
+        this.tornadoNativeArray = null;
+    }
+
+    public Q8_0TornadoTensor(ByteArray byteArray) {
+        this.size = -1;
+        this.scales = null;
+        this.quants = null;
+        this.segment = null;
+        this.tornadoNativeArray = byteArray;
+    }
+
+    public static Q8_0TornadoTensor fromTornadoMemorySegment(MemorySegment segment) {
+        return new Q8_0TornadoTensor(ByteArray.fromSegmentShallow(segment));
     }
 
     public int getSize() {
@@ -46,6 +64,11 @@ public class Q8_0TornadoTensor extends TornadoTensor {
      */
     public Int8Array getQuants() {
         return quants;
+    }
+
+    @Override
+    public ByteArray asByteArray() {
+        return tornadoNativeArray;
     }
 
     @Override
