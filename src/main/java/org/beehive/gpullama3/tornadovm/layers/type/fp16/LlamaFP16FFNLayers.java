@@ -44,7 +44,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
         int fusedQKVRows = config.dim() + 2 * config.kvDim();
         int fusedQKVGlobal = fusedQKVRows * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid fusedQKVWorker = WorkerGridFactory.genericWorker(fusedQKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
-        WorkerGrid ropeWithCacheWorker = WorkerGridFactory.genericWorker(config.dim() / 2, 128);
+        WorkerGrid ropeWithCacheWorker = WorkerGridFactory.genericWorker(config.dim() / 2, 512);
 
         // Map workers to tasks
         for (int i = 0; i < config.numberOfLayers(); i++) {
