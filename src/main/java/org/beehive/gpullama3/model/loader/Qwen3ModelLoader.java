@@ -52,6 +52,7 @@ public class Qwen3ModelLoader extends AbstractModelLoader<Qwen3, Qwen3Configurat
         int vocabSize = vocabulary.size();
 
         return new Qwen3Configuration(
+                readModelType(metadata),
                 (int) metadata.get("qwen3.embedding_length"),
                 (int) metadata.get("qwen3.feed_forward_length"),
                 (int) metadata.get("qwen3.block_count"),

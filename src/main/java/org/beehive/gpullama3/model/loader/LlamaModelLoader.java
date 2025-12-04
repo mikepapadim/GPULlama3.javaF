@@ -48,6 +48,7 @@ public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfigurat
         int vocabSize = metadata.containsKey("llama.vocab_size") ? (int) metadata.get("llama.vocab_size") : (int) metadata.get("tokenizer.ggml.tokens.length");
 
         return new LlamaConfiguration(
+                readModelType(metadata),
                 (int) metadata.get("llama.embedding_length"),
                 (int) metadata.get("llama.feed_forward_length"),
                 (int) metadata.get("llama.block_count"),

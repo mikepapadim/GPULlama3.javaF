@@ -52,6 +52,7 @@ public class Phi3ModelLoader extends AbstractModelLoader<Phi3, Phi3Configuration
         final String modelPrefix = "phi3.";
 
         var config = new Phi3Configuration(
+                readModelType(metadata),
                 (int) metadata.get(modelPrefix + "embedding_length"),           // dim
                 (int) metadata.get(modelPrefix + "feed_forward_length"),        // hidden_dim
                 (int) metadata.get(modelPrefix + "block_count"),                // n_layers
