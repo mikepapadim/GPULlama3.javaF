@@ -12,6 +12,8 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 public class Activation extends AbstractLayer {
     private final TaskGraph activationUpdate;
@@ -20,11 +22,23 @@ public class Activation extends AbstractLayer {
         super(taskGraphHandle, state, weights, config);
 
         KernelContext kernelContext = new KernelContext();
+
         // @formatter:off
-        this.activationUpdate = new TaskGraph(taskGraphHandle)
-            .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
-            .task("updateX", TransformerComputeKernels::convertFP16toFP32, kernelContext, state.embeddingX, state.wrapX)
-            .persistOnDevice(state.wrapX);
+        switch (config.modelType()) {
+            case "FP16" -> {
+                this.activationUpdate = new TaskGraph(taskGraphHandle)
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
+                        .task("updateX", TransformerComputeKernels::convertFP16toFP32, kernelContext, (HalfFloatArray) state.embeddingX, state.wrapX)
+                        .persistOnDevice(state.wrapX);
+            }
+            case "Q8_0" -> {
+                this.activationUpdate = new TaskGraph(taskGraphHandle)
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
+                        .task("updateX", TransformerComputeKernels::convertQ8_0toFP32, kernelContext, (ByteArray) state.embeddingX, state.wrapX)
+                        .persistOnDevice(state.wrapX);
+            }
+            default -> throw new UnsupportedOperationException("Quantization format " + config.modelType());
+        }
         // @formatter:on
     }
 
