@@ -29,19 +29,14 @@ public class LogitsFP16Layer extends AbstractLayer {
         super(name, state, weights, config);
         this.lastTaskGraphID = lastTaskGraphID;
         state.tempLogits.clear();
-
         var tornadoWeights = requireWeightsType(weights, TornadoWeights.class, "LogitsFP16Layer", "TornadoTensor");
         this.logitsTaskGraph = setupLogitsTaskGraph(tornadoWeights, config);
         this.schedulerType = schedulerType;
     }
 
-
-    /**
-     * Builds the logits computation graph.
-     */
+    // @formatter:off
     private TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config) {
-        TaskGraph logits = new TaskGraph("logits");
-
+        var logits = new TaskGraph("logits");
         // === Data Setup ===
         logits.consumeFromDevice(lastTaskGraphID, state.wrapX);
         logits.transferToDevice(DataTransferMode.FIRST_EXECUTION,
@@ -97,24 +92,17 @@ public class LogitsFP16Layer extends AbstractLayer {
         logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
         return logits;
     }
-
+    // @formatter:on
 
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
-        WorkerGrid logitsRMS;
-        if (weights instanceof Qwen2TornadoWeights) {
-            logitsRMS = WorkerGridFactory.createRmsNormWorker(config.dim(), 32);
-        } else {
-            logitsRMS = WorkerGridFactory.createRmsNormWorker(config.dim(), 256);
-        }
-
+        WorkerGrid logitsRMS = WorkerGridFactory.createRmsNormWorker(config.dim(), weights instanceof Qwen2TornadoWeights ? 32 : 256);
         var vocabSizeRowMajor = config.vocabularySize() * LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
-        WorkerGrid vocabWorker = new WorkerGrid1D(vocabSizeRowMajor);
+        var vocabWorker = new WorkerGrid1D(vocabSizeRowMajor);
         vocabWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS, 1, 1);
-
-        tornadoForwardScheduler.addWorkerGrid("logits.vocab_proj", vocabWorker);
         tornadoForwardScheduler.addWorkerGrid("logits.rms_reduce", logitsRMS);
         tornadoForwardScheduler.addWorkerGrid("logits.rms_apply_fp16", logitsRMS);
+        tornadoForwardScheduler.addWorkerGrid("logits.vocab_proj", vocabWorker);
         return tornadoForwardScheduler;
     }
 
