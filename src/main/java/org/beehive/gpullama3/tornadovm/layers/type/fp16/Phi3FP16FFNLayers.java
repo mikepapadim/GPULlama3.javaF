@@ -81,8 +81,6 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         WorkerGrid ffnDownWorker = WorkerGridFactory.genericWorker(ffnDownGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
         // Same worker as before - total rows = dim + 2*kvDim = opSize
 
-        // Remove: gridScheduler.addWorkerGrid("layer_" + i + ".splitQKV", splitQKVWorker);
-        // Map workers to tasks for each layer (in task execution order)
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // === Attention Block ===
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
@@ -92,8 +90,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             // === FFN Block ===
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".gateUpSiLU", splitGateUpSiLUWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_silu", fusedFFNWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", ffnDownWorker);
         }
         return gridScheduler;
@@ -135,7 +132,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
 
     // @formatter:off
     /**
-     * Transformer Layer Task Flow (Phi3FP16FFNLayers - Optimized)
+     * Transformer Layer Task Flow (Phi3FP16FFNLayers - Fully Optimized)
      *
      * ══════════════════════════════════════════════════════════════════════════════
      *                              ATTENTION BLOCK
@@ -149,16 +146,11 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
      *  └────────┬────────┘
      *           │
      *           ▼
-     *  ┌─────────────────────┐
-     *  │ attn_rms_qkv_matmul │──▶ wrapQkv (combined Q+K+V, FP32)
-     *  └──────────┬──────────┘    (fused: RMS apply + QKV matmul)
-     *             │
-     *             ▼
-     *  ┌──────────┐
-     *  │ splitQKV │──▶ wrapQ, wrapK, wrapV (separated)
-     *  └────┬─────┘
-     *       │
-     *       ▼
+     *  ┌────────────────────────┐
+     *  │ attn_rms_qkv_projection│──▶ wrapQ, wrapK, wrapV (direct output)
+     *  └───────────┬────────────┘    (fused: RMS apply + QKV matmul + split)
+     *              │
+     *              ▼
      *  ┌───────────────────┐   ┌─────────────────────────────────────┐
      *  │ rope_and_kv_cache │───▶│ Q,K rotated + KeyCache, ValueCache │
      *  └─────────┬─────────┘   └─────────────────────────────────────┘
@@ -188,14 +180,9 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
      *  └────────┬─────────┘
      *           │
      *           ▼
-     *  ┌─────────────────┐
-     *  │ rms_ffn_gate_up │──▶ wrapHb = RMSNorm(x) · wUp [2×hiddenDim]
-     *  └────────┬────────┘    (fused: RMS apply + gate/up matmul)
-     *           │
-     *           ▼
-     *  ┌────────────┐
-     *  │ gateUpSiLU │──▶ wrapHbU = SiLU(gate) ⊙ up
-     *  └──────┬─────┘
+     *  ┌──────────────┐
+     *  │ rms_ffn_silu │──▶ wrapHbU = SiLU(RMSNorm(x)·Wgate) ⊙ (RMSNorm(x)·Wup)
+     *  └──────┬───────┘    (fused: RMS apply + gate/up matmul + SiLU + GLU)
      *         │
      *         ▼
      *  ┌──────────────┐
@@ -207,41 +194,37 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
      *
      * ══════════════════════════════════════════════════════════════════════════════
      *
-     * Task Count: 10 tasks (NVIDIA) / 11 tasks (non-NVIDIA)
-     * Previous:   13 tasks
-     * Reduction:  3 tasks eliminated (23% fewer kernel launches)
+     * Task Count: 8 tasks (NVIDIA) / 9 tasks (non-NVIDIA)
+     * Original:   13 tasks
+     * Reduction:  5 tasks eliminated (38% fewer kernel launches)
      *
      * Data Flow Summary:
      *   Input:  wrapX (FP32) - hidden state from previous layer
      *   Output: wrapX (FP32) - updated hidden state with residual connections
      *
-     * Key Fusion Points (vs previous 13 tasks):
-     *   • attn_rms_qkv_matmul: Fused RMS apply + combined QKV matmul (2→1 kernel)
-     *   • rope_and_kv_cache:   Fused Phi3 RoPE rotation + cache write (2→1 kernel)
-     *   • rms_ffn_gate_up:     Fused RMS apply + gate/up matmul (2→1 kernel)
+     * Key Fusion Points (vs original 13 tasks):
+     *   • attn_rms_qkv_projection: Fused RMS apply + QKV matmul + direct split (3→1 kernel)
+     *   • rope_and_kv_cache:       Fused Phi3 RoPE rotation + cache write (2→1 kernel)
+     *   • rms_ffn_silu:            Fused RMS apply + gate/up matmul + SiLU + GLU (3→1 kernel)
      *
      * Phi3-Specific:
      *   • Combined wqkv: Single [opSize × dim] matrix for Q+K+V projection
-     *   • Split after projection: splitQKV separates combined buffer
+     *   • Direct QKV output: No intermediate buffer, routes by row index
      *   • Phi3 RoPE: Uses headSize/2 offset pattern (different from Llama/Qwen)
      *   • Combined wUp: Single [2×hiddenDim × dim] matrix for gate+up
-     *   • Split after SiLU: gateUpSiLU separates and applies activation
+     *   • Inline SiLU+GLU: No intermediate wrapHb buffer needed
      *
      */
+    // @formatter:on
     TaskGraph setupSinglePhi3FFNLayer(Phi3TornadoWeights weights, int layerIndex) {
         var taskGraphName = "layer_" + layerIndex;
-
-        TaskGraph unifiedLayer = new TaskGraph(taskGraphName);
+        var unifiedLayer = new TaskGraph(taskGraphName);
         unifiedLayer.consumeFromDevice(phi3State.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Attention weights
-                weights.rms_att_weightLayered[layerIndex].asFloatArray(),
-                weights.wqkvLayered[layerIndex].asHalfFloatArray(),
-                weights.woLayered[layerIndex].asHalfFloatArray(),
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(), weights.wqkvLayered[layerIndex].asHalfFloatArray(), weights.woLayered[layerIndex].asHalfFloatArray(),
                 // FFN weights
-                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                weights.wUpLayered[layerIndex].asHalfFloatArray(),
-                weights.wDownLayered[layerIndex].asHalfFloatArray());
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), weights.wUpLayered[layerIndex].asHalfFloatArray(), weights.wDownLayered[layerIndex].asHalfFloatArray());
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -249,34 +232,23 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
-        unifiedLayer.task("attn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                context,
-                phi3State.temp,               // output: scale factor
+        unifiedLayer.task("attn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, phi3State.temp,               // output: scale factor
                 phi3State.wrapX,              // input: hidden state
                 phi3Config.dim(),             // dimension
                 phi3Config.rmsNormEps(),      // epsilon
                 phi3State.localSize);         // local memory size
 
-        unifiedLayer.task("attn_rms_qkv_projection",
-                Phi3Kernels::fusedRmsNormQKVMatmulDirect,
-                context,
-                phi3State.wrapX,              // input
+        unifiedLayer.task("attn_rms_qkv_projection", Phi3Kernels::fusedRmsNormQKVMatmulDirect, context, phi3State.wrapX,              // input
                 phi3State.wrapQ,              // output Q
                 phi3State.wrapK,              // output K
                 phi3State.wrapV,              // output V
-                weights.rms_att_weightLayered[layerIndex].asFloatArray(),
-                phi3State.temp,               // RMS scale
-                weights.wqkvLayered[layerIndex].asHalfFloatArray(),
-                phi3Config.dim(),             // dim
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(), phi3State.temp,               // RMS scale
+                weights.wqkvLayered[layerIndex].asHalfFloatArray(), phi3Config.dim(),             // dim
                 phi3Config.kvDim(),           // kvDim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Fused Phi3 RoPE Rotation + KV Cache Write
-        unifiedLayer.task("rope_and_kv_cache",
-                Phi3Kernels::ropeRotationWithCacheCopyPhi3,
-                context,
-                phi3State.positionHolder,     // current position
+        unifiedLayer.task("rope_and_kv_cache", Phi3Kernels::ropeRotationWithCacheCopyPhi3, context, phi3State.positionHolder,     // current position
                 phi3State.wrapQ,              // Q vectors (in/out, rotated)
                 phi3State.wrapK,              // K vectors (in/out, rotated)
                 phi3State.wrapV,              // V vectors (in only)
@@ -289,10 +261,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 phi3Config.contextLength());  // max sequence length
 
         // Flash Attention
-        unifiedLayer.task("attention",
-                TransformerComputeKernelsLayered::processHeadsFlashAttention,
-                context,
-                phi3State.wrapQ,              // query vectors
+        unifiedLayer.task("attention", TransformerComputeKernelsLayered::processHeadsFlashAttention, context, phi3State.wrapQ,              // query vectors
                 phi3State.wrapKeyCache,       // key cache
                 phi3State.wrapValueCache,     // value cache
                 phi3State.wrapXb,             // output: attention result
@@ -305,10 +274,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 phi3Config.contextLength());  // context length
 
         // Output Projection with Residual
-        unifiedLayer.task("attn_output_proj",
-                TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
-                context,
-                phi3State.wrapXb,             // input: attention output
+        unifiedLayer.task("attn_output_proj", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, phi3State.wrapXb,             // input: attention output
                 phi3State.wrapX,              // output: wrapX += Wo · wrapXb
                 weights.woLayered[layerIndex].asHalfFloatArray(),  // Wo [dim × dim]
                 phi3Config.dim(),             // input dim
@@ -320,10 +286,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
-        unifiedLayer.task("ffn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                context,
-                phi3State.tempFFN,            // output: scale factor
+        unifiedLayer.task("ffn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, phi3State.tempFFN,            // output: scale factor
                 phi3State.wrapX,              // input: hidden state
                 phi3Config.dim(),             // dimension
                 phi3Config.rmsNormEps(),      // epsilon
@@ -331,46 +294,25 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
 
         // Final normalization (non-NVIDIA only)
         if (shouldUseFinalNormalization()) {
-            unifiedLayer.task("ffn_rms_finalize",
-                    TransformerComputeKernelsLayered::reductionFinalNormalization,
-                    context,
-                    phi3State.tempFFN,        // scale factor (in/out)
+            unifiedLayer.task("ffn_rms_finalize", TransformerComputeKernelsLayered::reductionFinalNormalization, context, phi3State.tempFFN,        // scale factor (in/out)
                     phi3Config.dim(),         // dimension
                     phi3Config.rmsNormEps()); // epsilon
         }
 
-        // Fused RMS Apply + Gate/Up Projection (combined output)
-        unifiedLayer.task("rms_ffn_gate_up",
-                Phi3Kernels::fusedRmsNormMatmul,
-                context,
-                phi3State.wrapX,              // input: raw hidden state (FP32)
-                phi3State.wrapHb,             // output: gate + up combined [2×hiddenDim]
-                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),  // RMS weights
-                phi3State.tempFFN,            // RMS scale factor
-                weights.wUpLayered[layerIndex].asHalfFloatArray(),         // wUp [2×hiddenDim × dim]
-                phi3Config.dim(),             // input dimension
-                2 * phi3Config.hiddenDim(),   // output dimension
+        unifiedLayer.task("rms_ffn_silu", Phi3Kernels::fusedRmsNormFFNGateUpSiLU, context, phi3State.wrapX,              // input
+                phi3State.wrapHbU,            // output (direct to final FFN buffer)
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), phi3State.tempFFN,            // RMS scale
+                weights.wUpLayered[layerIndex].asHalfFloatArray(), phi3Config.dim(),             // input dim
+                phi3Config.hiddenDim(),       // output dim (hiddenDim, not 2×hiddenDim!)
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        // Split Gate/Up and apply SiLU activation
-        unifiedLayer.task("gateUpSiLU",
-                TransformerComputeKernelsLayered::splitGateUpAndSiLU,
-                phi3State.wrapHb,             // input: gate + up combined
-                phi3State.wrapHbG,            // output: SiLU(gate) (intermediate)
-                phi3State.wrapHbU,            // output: SiLU(gate) ⊙ up
-                phi3Config.hiddenDim());      // hidden dimension
-
         // Down Projection with Residual
-        unifiedLayer.task("ffn_down_proj",
-                        TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
-                        context,
-                        phi3State.wrapHbU,            // input: FFN intermediate
-                        phi3State.wrapX,              // output: wrapX += wDown · wrapHbU
-                        weights.wDownLayered[layerIndex].asHalfFloatArray(),  // wDown [dim × hiddenDim]
-                        phi3Config.hiddenDim(),       // input dim
-                        phi3Config.dim(),             // output dim
-                        LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .persistOnDevice(phi3State.wrapX);
+        unifiedLayer.task("ffn_down_proj", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, phi3State.wrapHbU,            // input: FFN intermediate
+                phi3State.wrapX,              // output: wrapX += wDown · wrapHbU
+                weights.wDownLayered[layerIndex].asHalfFloatArray(),  // wDown [dim × hiddenDim]
+                phi3Config.hiddenDim(),       // input dim
+                phi3Config.dim(),             // output dim
+                LOCAL_WORK_GROUP_SIZE_ALLOC).persistOnDevice(phi3State.wrapX);
 
         return unifiedLayer;
     }
@@ -381,26 +323,14 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         if (layerIndex == 0) {
             // First layer: Transfer temporary buffers and state every execution
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    phi3State.positionHolder);
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, phi3State.positionHolder);
             // First execution: allocate workspace buffers
-            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                    context, phi3State.wrapXb, phi3State.wrapXb2,
-                    phi3State.wrapQ, phi3State.wrapK, phi3State.wrapV,
-                    phi3State.wrapKeyCache, phi3State.wrapValueCache,
-                    phi3State.wrapAtt, phi3State.wrapHb,
-                    phi3State.temp, phi3State.tempFFN,
-                    phi3State.wrapHbG, phi3State.wrapHbU, phi3State.wrapQkv);
+            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context, phi3State.wrapXb, phi3State.wrapXb2, phi3State.wrapQ, phi3State.wrapK, phi3State.wrapV, phi3State.wrapKeyCache,
+                    phi3State.wrapValueCache, phi3State.wrapAtt, phi3State.wrapHb, phi3State.temp, phi3State.tempFFN, phi3State.wrapHbG, phi3State.wrapHbU, phi3State.wrapQkv);
         } else {
             // Subsequent layers: Consume data from previous layer
-            unifiedLayer.consumeFromDevice(
-                    context, phi3State.wrapXb, phi3State.wrapXb2,
-                    phi3State.wrapQ, phi3State.wrapK, phi3State.wrapV,
-                    phi3State.wrapKeyCache, phi3State.wrapValueCache,
-                    phi3State.wrapAtt, phi3State.wrapHb,
-                    phi3State.positionHolder,
-                    phi3State.temp, phi3State.tempFFN,
-                    phi3State.wrapHbG, phi3State.wrapHbU, phi3State.wrapQkv);
+            unifiedLayer.consumeFromDevice(context, phi3State.wrapXb, phi3State.wrapXb2, phi3State.wrapQ, phi3State.wrapK, phi3State.wrapV, phi3State.wrapKeyCache, phi3State.wrapValueCache,
+                    phi3State.wrapAtt, phi3State.wrapHb, phi3State.positionHolder, phi3State.temp, phi3State.tempFFN, phi3State.wrapHbG, phi3State.wrapHbU, phi3State.wrapQkv);
         }
         return unifiedLayer;
     }

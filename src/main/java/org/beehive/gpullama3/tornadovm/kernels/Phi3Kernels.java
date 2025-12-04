@@ -283,4 +283,98 @@ public class Phi3Kernels {
             }
         }
     }
+    /**
+     * Fused RMSNorm apply + Gate/Up projection + SiLU + GLU in one kernel.
+     *
+     * <p>Eliminates the need for separate gateUpSiLU kernel by computing both
+     * gate and up projections per workgroup and applying activation inline.</p>
+     *
+     * <p>For each output index i:</p>
+     * <ul>
+     *   <li>gate[i] = dot(wUp[i], RMSNorm(x))</li>
+     *   <li>up[i] = dot(wUp[hiddenDim + i], RMSNorm(x))</li>
+     *   <li>output[i] = SiLU(gate[i]) × up[i]</li>
+     * </ul>
+     *
+     * @param context           Kernel execution context
+     * @param x                 Input hidden state (FP32) [dim]
+     * @param output            Output buffer (FP32) [hiddenDim] - final FFN result
+     * @param rmsWeights        RMS normalization weights (FP32) [dim]
+     * @param rmsScale          Precomputed RMS scale factor [1]
+     * @param wUp               Combined gate+up weight matrix (FP16) [2×hiddenDim × dim]
+     * @param dim               Input dimension
+     * @param hiddenDim         Hidden dimension (output size)
+     * @param localWorkGroupSize Local work group size for reduction
+     */
+    public static void fusedRmsNormFFNGateUpSiLU(
+            KernelContext context,
+            FloatArray x,               // input (FP32)
+            FloatArray output,          // output (FP32) [hiddenDim]
+            FloatArray rmsWeights,      // RMS norm weights
+            FloatArray rmsScale,        // temp[0] = scale factor
+            HalfFloatArray wUp,         // combined gate+up weights [2×hiddenDim × dim]
+            int dim,                    // input dimension
+            int hiddenDim,              // output dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float scale = rmsScale.get(0);
+
+        // Allocate shared memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        // === Compute GATE (row i) ===
+        int gateRowOffset = rowId * dim;
+
+        float gatePartialSum = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            gatePartialSum += wUp.get(gateRowOffset + j).getFloat32() * normalized;
+        }
+
+        localSum[localId] = gatePartialSum;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        float gateResult = localSum[0];
+
+        // === Compute UP (row hiddenDim + i) ===
+        int upRowOffset = (hiddenDim + rowId) * dim;
+
+        float upPartialSum = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            upPartialSum += wUp.get(upRowOffset + j).getFloat32() * normalized;
+        }
+
+        localSum[localId] = upPartialSum;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        float upResult = localSum[0];
+
+        // === Apply SiLU(gate) × up ===
+        if (localId == 0) {
+            float silu = gateResult / (1.0f + TornadoMath.exp(-gateResult));
+            output.set(rowId, silu * upResult);
+        }
+    }
 }
