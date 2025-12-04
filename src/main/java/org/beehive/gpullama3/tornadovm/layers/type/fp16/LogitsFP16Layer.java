@@ -35,28 +35,69 @@ public class LogitsFP16Layer extends AbstractLayer {
         this.schedulerType = schedulerType;
     }
 
+
     /**
      * Builds the logits computation graph.
      */
     private TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config) {
         TaskGraph logits = new TaskGraph("logits");
-        logits.consumeFromDevice(lastTaskGraphID, state.wrapX) //
-                .transferToDevice(DataTransferMode.FIRST_EXECUTION, context,  //
-                        state.wrapLogits, state.wrapXbFP16,  //
-                        weights.wclsByteArray.asHalfFloatArray(),             //
-                        weights.rms_final_weight_as_floatArray.asFloatArray())  //
-                .task("rms_reduce", TransformerComputeKernels::reductionOneBlockWithLayer, context, state.tempLogits, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
+
+        // === Data Setup ===
+        logits.consumeFromDevice(lastTaskGraphID, state.wrapX);
+        logits.transferToDevice(DataTransferMode.FIRST_EXECUTION,
+                // Kernel context
+                context,
+                // Output buffer
+                state.wrapLogits,
+                // Intermediate FP16 buffer
+                state.wrapXbFP16,
+                // Weights
+                weights.wclsByteArray.asHalfFloatArray(),
+                weights.rms_final_weight_as_floatArray.asFloatArray());
+
+        // === Final RMS Normalization ===
+        logits.task("rms_reduce",
+                TransformerComputeKernels::reductionOneBlockWithLayer,
+                context,
+                state.tempLogits,        // output: partial sums + final scale factor
+                state.wrapX,             // input: hidden state
+                config.dim(),            // dimension
+                config.rmsNormEps(),     // epsilon for numerical stability
+                state.localSize);        // local workgroup size
+
         if (schedulerType == SchedulerType.NON_NVIDIA) {
-            logits.task("rms_finalize", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempLogits, config.dim(), config.rmsNormEps());
+            logits.task("rms_finalize",
+                    TransformerComputeKernelsLayered::reductionFinalNormalization,
+                    context,
+                    state.tempLogits,    // in/out: combines partial sums
+                    config.dim(),        // dimension
+                    config.rmsNormEps()); // epsilon
         }
-        logits.task("rms_apply_fp16", TransformerComputeKernels::mapContextWithQuantizeLogits, context, state.wrapXbFP16, state.wrapX, weights.rms_final_weight_as_floatArray.asFloatArray(), state.tempLogits)
-                .task("vocab_proj", TransformerComputeKernelsLayered::matrixVectorGeneric, //
-                context, state.wrapXbFP16, state.wrapLogits,  //
-                weights.wclsByteArray.asHalfFloatArray(), config.dim(), config.vocabularySize(), //
-                LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS); //
+
+        logits.task("rms_apply_fp16",
+                TransformerComputeKernels::mapContextWithQuantizeLogits,
+                context,
+                state.wrapXbFP16,        // output: normalized (FP16)
+                state.wrapX,             // input: hidden state
+                weights.rms_final_weight_as_floatArray.asFloatArray(),  // RMS weights
+                state.tempLogits);       // scale factor from reduction
+
+        // === Vocabulary Projection ===
+        logits.task("vocab_proj",
+                TransformerComputeKernelsLayered::matrixVectorGeneric,
+                context,
+                state.wrapXbFP16,                              // input (FP16)
+                state.wrapLogits,                              // output
+                weights.wclsByteArray.asHalfFloatArray(),      // vocabulary weights
+                config.dim(),                                  // input dimension
+                config.vocabularySize(),                       // output dimension
+                LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
+
+        // === Transfer Results to Host ===
         logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
         return logits;
     }
+
 
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
