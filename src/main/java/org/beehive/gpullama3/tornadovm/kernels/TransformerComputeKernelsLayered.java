@@ -17,6 +17,27 @@ public class TransformerComputeKernelsLayered {
     public TransformerComputeKernelsLayered() {
     }
 
+    public static void fusedQKvBiasAddition(
+            KernelContext context,
+            FloatArray q_out, FloatArray k_out, FloatArray qBias,
+            FloatArray v_out, FloatArray kBias, FloatArray vBias,
+            int dimQ, int dimKV) {
+
+        int gid = context.globalIdx;
+
+        if (gid < dimQ) {
+            // 1. Add Q bias
+            q_out.set(gid, q_out.get(gid) + qBias.get(gid));
+
+            // 2. Conditionally Add K and V Bias
+            if (gid < dimKV) {
+                k_out.set(gid, k_out.get(gid) + kBias.get(gid));
+                v_out.set(gid, v_out.get(gid) + vBias.get(gid));
+            }
+        }
+    }
+
+
     public static void fusedRmsNormFFNGateUp(
             KernelContext context,
             FloatArray x,               // raw input (FP32)
