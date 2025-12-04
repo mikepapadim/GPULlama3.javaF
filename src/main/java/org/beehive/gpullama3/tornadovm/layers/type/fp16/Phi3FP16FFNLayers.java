@@ -86,10 +86,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // === Attention Block ===
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
-//            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_matmul", fusedQkvWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQkvWorker);
-
-//            gridScheduler.addWorkerGrid("layer_" + i + ".splitQKV", splitQKVWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
@@ -261,30 +258,6 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 phi3Config.rmsNormEps(),      // epsilon
                 phi3State.localSize);         // local memory size
 
-//        // Fused RMS Apply + QKV Projection (combined matrix)
-//        unifiedLayer.task("attn_rms_qkv_matmul",
-//                Phi3Kernels::fusedRmsNormMatmul,
-//                context,
-//                phi3State.wrapX,              // input: raw hidden state (FP32)
-//                phi3State.wrapQkv,            // output: combined Q+K+V
-//                weights.rms_att_weightLayered[layerIndex].asFloatArray(),  // RMS weights
-//                phi3State.temp,               // RMS scale factor from reduction
-//                weights.wqkvLayered[layerIndex].asHalfFloatArray(),        // Wqkv [opSize × dim]
-//                phi3Config.dim(),             // input dimension
-//                opSize,                       // output dimension (Q + K + V)
-//                LOCAL_WORK_GROUP_SIZE_ALLOC);
-//
-//        // Split combined QKV into separate Q, K, V buffers
-//        unifiedLayer.task("splitQKV",
-//                TransformerComputeKernelsLayered::splitQKV,
-//                phi3State.wrapQkv,
-//                phi3State.wrapQ,
-//                phi3State.wrapK,
-//                phi3State.wrapV,
-//                phi3Config.dim(),
-//                phi3Config.headSize() * phi3Config.numberOfKeyValueHeads());
-
-        // AFTER: 1 task
         unifiedLayer.task("attn_rms_qkv_projection",
                 Phi3Kernels::fusedRmsNormQKVMatmulDirect,
                 context,
