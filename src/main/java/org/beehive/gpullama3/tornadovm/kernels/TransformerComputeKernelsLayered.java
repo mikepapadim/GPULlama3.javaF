@@ -1128,6 +1128,26 @@ public class TransformerComputeKernelsLayered {
         }
     }
 
+    public static void matrixVectorGenericWithResidualQ8_0Byte(KernelContext context, FloatArray x, FloatArray hb, ByteArray w, int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = localWorkGroupSize;
+
+        // Early exit if this workgroup is beyond our output dimension
+        if (rowId >= d) {
+            return;
+        }
+
+        float sum = matrixVectorRowMajorOptimizedQ8_0Byte(context, localSize, x, w, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float result = hb.get(rowId) + sum;
+            hb.set(rowId, result);
+        }
+    }
+
     public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, FloatArray x, FloatArray hb, Int8Array w1_quants, HalfFloatArray w1_scales, Int8Array w3_quants,
             HalfFloatArray w3_scales, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
@@ -1140,6 +1160,29 @@ public class TransformerComputeKernelsLayered {
 
         float sum1 = matrixVectorRowMajorOptimizedQ8_0(context, localWorkGroupSize, x, w1_quants, w1_scales, n);
         float sum3 = matrixVectorRowMajorOptimizedQ8_0(context, localWorkGroupSize, x, w3_quants, w3_scales, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float silu = siluActivation(sum1);  // Using the new SiLU method
+            float result = silu * sum3;
+            hb.set(rowId, result);
+        }
+    }
+
+    public static void fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte(KernelContext context, FloatArray x, FloatArray hb,
+                                                                        ByteArray w1,
+                                                                        ByteArray w3,
+                                                                        int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= d) {
+            return;
+        }
+
+        float sum1 = matrixVectorRowMajorOptimizedQ8_0Byte(context, localWorkGroupSize, x, w1, n);
+        float sum3 = matrixVectorRowMajorOptimizedQ8_0Byte(context, localWorkGroupSize, x, w3, n);
 
         // Thread 0 in each workgroup writes the final result
         if (localId == 0) {
