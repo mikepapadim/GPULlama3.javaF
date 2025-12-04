@@ -6,6 +6,7 @@ import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
 
 /**
  * Represents the base state structure used during LLM inference.
@@ -59,7 +60,7 @@ public abstract class State {
     public final FloatArray wrapValueCache; // FloatArray wrapper for the value cache, optimized for TornadoVM.
     public final IntArray positionHolder;
 
-    public HalfFloatArray embeddingX;
+    public TornadoNativeArray embeddingX;
     // store inter
     public int localSize;
     public FloatArray temp;         // Temporary buffer for intermediate calculations, size adjusted for local workgroup size.
@@ -125,7 +126,7 @@ public abstract class State {
         public FloatArray wrapQ, wrapK, wrapV, wrapAtt, wrapKeyCache, wrapValueCache;
         public IntArray positionHolder;
         public FloatArray temp, tempFFN, tempLogits;
-        public HalfFloatArray embeddingX;
+        public TornadoNativeArray embeddingX;
     }
 
     @Override

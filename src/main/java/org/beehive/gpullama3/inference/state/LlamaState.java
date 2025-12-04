@@ -3,6 +3,7 @@ package org.beehive.gpullama3.inference.state;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
@@ -53,7 +54,18 @@ public final class LlamaState extends State {
         fields.wrapHb = new FloatArray(config.hiddenDim());
         fields.wrapHb2 = new FloatArray(config.hiddenDim());
 
-        fields.embeddingX = new HalfFloatArray(config.dim());
+        switch (config.modelType()) {
+            case "FP16" -> fields.embeddingX = new HalfFloatArray(config.dim());
+            case "Q8_0" -> {
+                int blockSize = 32;
+                int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
+                int blocksNeeded = (config.dim() + blockSize - 1) / blockSize;
+                int q8BytesNeeded = blocksNeeded * Q8_0_BLOCK_BYTES;
+                fields.embeddingX = new ByteArray(q8BytesNeeded);
+            }
+            default -> throw new UnsupportedOperationException("Quantization format " + config.modelType());
+        }
+
 
         fields.wrapLogits = new FloatArray(config.vocabularySize());
         fields.wrapQ = new FloatArray(config.dim());
