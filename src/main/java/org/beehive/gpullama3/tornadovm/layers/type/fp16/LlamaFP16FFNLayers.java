@@ -159,10 +159,8 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                 config.headSize(),
                 layerIndex,
                 config.contextLength());
-
         // Attention
         configureAttention(unifiedLayer, layerIndex);
-
         // Output Projection (Wo) with residual
         unifiedLayer.task("attn_output_proj",
                 TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
