@@ -14,7 +14,6 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.IntStream;
 
@@ -230,7 +229,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
         int kvDim = nEmbdGqa;                                  // K/V output size (reduced for GQA)
         int inputDim = qwen3Config.dim();                      // Model dimension
 
-        TaskGraph unifiedLayer = new TaskGraph(taskGraphName);
+        var unifiedLayer = new TaskGraph(taskGraphName);
 
         // === Data Setup ===
         unifiedLayer.consumeFromDevice(state.wrapX);
@@ -407,7 +406,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                     context, qwen3State.wrapXb, qwen3State.wrapXb2,  //
                     qwen3State.wrapQ, qwen3State.wrapK, qwen3State.wrapV, //
                     qwen3State.wrapKeyCache, qwen3State.wrapValueCache,  //
-                    qwen3State.wrapAtt, qwen3State.wrapHb, qwen3State.temp, qwen3State.tempFFN, qwen3State.tempQcur, qwen3State.tempKcur);
+                    qwen3State.wrapAtt, qwen3State.wrapHb, qwen3State.temp, qwen3State.tempFFN);
         } else {
             // Subsequent layers: Consume data from previous layer
             unifiedLayer.consumeFromDevice(context, qwen3State.wrapXb, qwen3State.wrapXb2, //
@@ -416,7 +415,6 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                     qwen3State.wrapValueCache, qwen3State.wrapAtt, //
                     qwen3State.wrapHb, qwen3State.positionHolder, qwen3State.temp, qwen3State.tempFFN); //
 
-            unifiedLayer.consumeFromDevice(qwen3State.tempQcur, qwen3State.tempKcur);
         }
         return unifiedLayer;
     }
