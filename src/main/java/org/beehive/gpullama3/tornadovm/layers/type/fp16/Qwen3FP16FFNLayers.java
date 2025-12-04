@@ -315,7 +315,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
 
         // Flash Attention
         unifiedLayer.task("attention",
-                TransformerComputeKernelsLayered::processHeadsFlashAttentionOpt,
+                TransformerComputeKernelsLayered::processHeadsFlashAttention,
                 context,
                 qwen3State.wrapQ,             // query vectors
                 qwen3State.wrapKeyCache,      // key cache

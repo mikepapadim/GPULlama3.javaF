@@ -564,40 +564,7 @@ public class Qwen3Kernels {
         }
     }
 
-    /**
-     * Fused Q and K RMSNorm for Qwen3.
-     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
-     *
-     * Workgroup assignment:
-     *   - Workgroups [0, nHeads): Process Q heads
-     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
-     *
-     * Each workgroup computes reduction and applies normalization for one head.
-     */
-    /**
-     * Fused Q and K RMSNorm for Qwen3.
-     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
-     *
-     * Workgroup assignment:
-     *   - Workgroups [0, nHeads): Process Q heads
-     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
-     */
-    /**
-     * Fused Q and K RMSNorm for Qwen3.
-     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
-     *
-     * Workgroup assignment:
-     *   - Workgroups [0, nHeads): Process Q heads
-     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
-     */
-    /**
-     * Fused Q and K RMSNorm for Qwen3.
-     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
-     *
-     * Workgroup assignment:
-     *   - Workgroups [0, nHeads): Process Q heads
-     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
-     */
+
     /**
      * Fused Q and K RMSNorm for Qwen3.
      * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.

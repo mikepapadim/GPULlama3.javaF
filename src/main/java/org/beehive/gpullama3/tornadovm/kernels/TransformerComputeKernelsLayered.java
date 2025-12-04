@@ -592,6 +592,200 @@ public class TransformerComputeKernelsLayered {
         }
     }
 
+    public static void processHeadsFlashAttentionOptV2(
+            KernelContext context,
+            FloatArray q,
+            FloatArray key_cache,
+            FloatArray value_cache,
+            FloatArray xb,
+            int nHeads,
+            int headSize, // NOTE: Still used for logic, but not for allocation size
+            int kvDim,
+            int kvMul,
+            IntArray positionHolder,
+            int layer,
+            int contextLength) {
+
+        // --- STATIC CONSTANTS FOR OPENCL ALLOCATIONS ---
+        // These must be large enough to handle the maximum expected values for
+        // headSize and localSize in your model/hardware setup.
+        // Assuming Max Head Size is 256 and Max Local Size is 256.
+        final int MAX_HEAD_SIZE = 256;
+        final int MAX_LOCAL_SIZE = 256;
+        final int MAX_BLOCK_SIZE_C = 32;
+        final int MAX_TILE_ELEMENTS = MAX_BLOCK_SIZE_C * MAX_HEAD_SIZE;
+
+        int tid = context.localIdx;
+        int h = context.groupIdx;
+        int localSize = context.localGroupSizeX;
+
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int loff = layer * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_SIZE_C = 32;
+
+        // === Shared memory allocations (FIXED: using static sizes) ===
+        // ERROR FIX 1: Use MAX_HEAD_SIZE instead of dynamic headSize
+        float[] q_shared = context.allocateFloatLocalArray(MAX_HEAD_SIZE);
+        // ERROR FIX 2: Use MAX_TILE_ELEMENTS instead of BLOCK_SIZE_C * headSize
+        float[] k_tile = context.allocateFloatLocalArray(MAX_TILE_ELEMENTS);
+        float[] v_tile = context.allocateFloatLocalArray(MAX_TILE_ELEMENTS);
+
+        float[] s_tile = context.allocateFloatLocalArray(BLOCK_SIZE_C);         // Size is constant (32)
+        float[] exp_tile = context.allocateFloatLocalArray(BLOCK_SIZE_C);       // Size is constant (32)
+
+        // ERROR FIX 3: Use MAX_LOCAL_SIZE instead of dynamic localSize
+        float[] reduction_shared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+
+        float[] state_shared = context.allocateFloatLocalArray(4);              // Size is constant (4)
+
+        // === Dimension partitioning: each thread handles subset of output dims ===
+        int dimsPerThread = (headSize + localSize - 1) / localSize;
+        int myStartDim = tid * dimsPerThread;
+        int myEndDim = Math.min(myStartDim + dimsPerThread, headSize);
+        int myDimCount = myEndDim - myStartDim;
+
+        // FIX from previous iteration: ensuring output array is statically sized
+        final int MAX_OUTPUT_DIMS = MAX_HEAD_SIZE / 8; // e.g., 32 if MAX_HEAD_SIZE=256
+        float[] output = new float[MAX_OUTPUT_DIMS];
+
+        // Initialize thread-local output
+        for (int i = 0; i < myDimCount; i++) {
+            output[i] = 0.0f;
+        }
+
+        // Initialize shared state
+        if (tid == 0) {
+            state_shared[0] = Float.NEGATIVE_INFINITY;
+            state_shared[1] = 0.0f;
+        }
+
+        // Load query into shared memory (cooperative)
+        // NOTE: Loop bound must still use headSize to read correct data volume
+        for (int i = tid; i < headSize; i += localSize) {
+            q_shared[i] = q.get(h * headSize + i);
+        }
+        context.localBarrier();
+
+        // Process sequence in tiles
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_SIZE_C) {
+            int tileEnd = Math.min(tileC + BLOCK_SIZE_C - 1, pos);
+            int tileLen = tileEnd - tileC + 1;
+
+            // === Cooperative K/V tile loading ===
+            int totalElements = tileLen * headSize;
+            int elementsPerThread = (totalElements + localSize - 1) / localSize;
+            int startElem = tid * elementsPerThread;
+            int endElem = Math.min(startElem + elementsPerThread, totalElements);
+
+            for (int globalElemIdx = startElem; globalElemIdx < endElem; globalElemIdx++) {
+                int seqIdx = globalElemIdx / headSize;
+                int dimIdx = globalElemIdx % headSize;
+                int kvOffset = loff + (tileC + seqIdx) * kvDim + kvHeadIdx * headSize + dimIdx;
+                int tileMemOffset = seqIdx * headSize + dimIdx;
+
+                // Check bounds just to be safe, though kvDim/headSize should ensure this is valid.
+                if (tileMemOffset < MAX_TILE_ELEMENTS) {
+                    k_tile[tileMemOffset] = key_cache.get(kvOffset);
+                    v_tile[tileMemOffset] = value_cache.get(kvOffset);
+                }
+            }
+            context.localBarrier();
+
+            // === Compute attention scores (cooperative) ===
+            for (int t = tid; t < tileLen; t += localSize) {
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += q_shared[d] * k_tile[t * headSize + d];
+                }
+                s_tile[t] = score / TornadoMath.sqrt(headSize);
+            }
+            context.localBarrier();
+
+            // ... (Parallel reduction for tileMax - uses reduction_shared, which is now fixed)
+            float threadMax = Float.NEGATIVE_INFINITY;
+            for (int t = tid; t < tileLen; t += localSize) {
+                if (s_tile[t] > threadMax) {
+                    threadMax = s_tile[t];
+                }
+            }
+            reduction_shared[tid] = threadMax;
+            context.localBarrier();
+
+            for (int stride = localSize / 2; stride > 0; stride /= 2) {
+                if (tid < stride) {
+                    reduction_shared[tid] = Math.max(reduction_shared[tid], reduction_shared[tid + stride]);
+                }
+                context.localBarrier();
+            }
+            float tileMax = reduction_shared[0];
+
+            // === Update running max and rescale if needed ===
+            float prevMax = state_shared[0];
+            float newMax = Math.max(prevMax, tileMax);
+            float scale = 1.0f;
+
+            if (newMax != prevMax && prevMax != Float.NEGATIVE_INFINITY) {
+                scale = TornadoMath.exp(prevMax - newMax);
+                for (int i = 0; i < myDimCount; i++) {
+                    output[i] *= scale;
+                }
+            }
+
+            // === Compute exp(score - max) and tile sum (cooperative) ===
+            for (int t = tid; t < tileLen; t += localSize) {
+                exp_tile[t] = TornadoMath.exp(s_tile[t] - newMax);
+            }
+            context.localBarrier();
+
+            // Parallel reduction for tile sum
+            // ... (Uses reduction_shared, which is now fixed)
+            float threadSum = 0.0f;
+            for (int t = tid; t < tileLen; t += localSize) {
+                threadSum += exp_tile[t];
+            }
+            reduction_shared[tid] = threadSum;
+            context.localBarrier();
+
+            for (int stride = localSize / 2; stride > 0; stride /= 2) {
+                if (tid < stride) {
+                    reduction_shared[tid] += reduction_shared[tid + stride];
+                }
+                context.localBarrier();
+            }
+            float tileSum = reduction_shared[0];
+
+            // Update shared state (thread 0)
+            if (tid == 0) {
+                state_shared[0] = newMax;
+                state_shared[1] = state_shared[1] * scale + tileSum;
+            }
+            context.localBarrier();
+
+            // === Accumulate output (each thread handles its dimensions) ===
+            for (int t = 0; t < tileLen; t++) {
+                float expScore = exp_tile[t];
+                for (int i = 0; i < myDimCount; i++) {
+                    int d = myStartDim + i;
+                    output[i] += expScore * v_tile[t * headSize + d];
+                }
+            }
+            context.localBarrier();
+        }
+
+        // === Final normalization and write ===
+        float sumExp = state_shared[1];
+        float normFactor = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+
+        int baseOffset = h * headSize + myStartDim;
+        for (int i = 0; i < myDimCount; i++) {
+            xb.set(baseOffset + i, output[i] * normFactor);
+        }
+    }
     /**
      * Same as processHeadsFlashAttention but with some optimizations that seem to lower attention's execution time, especially in larger models.
      */
