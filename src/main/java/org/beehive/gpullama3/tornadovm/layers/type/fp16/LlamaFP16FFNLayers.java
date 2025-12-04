@@ -57,8 +57,12 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", configDimRowMajorGlobalWorker);
             // === FFN Block ===
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_apply", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_gate_up", configHiddenDimRowMajorWorker);
+//            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_apply", rmsNormWorker);
+//            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_gate_up", configHiddenDimRowMajorWorker);
+
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
+
+
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", configDimRowMajorGlobalWorker);
         }
         return tornadoForwardScheduler;
@@ -224,7 +228,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
         unifiedLayer.task("qkv_projection",
                 TransformerComputeKernelsLayered::fusedQKVMatmulX,
                 context,
-                state.wrapXbFP16,                                     // input (FP16)
+                state.wrapXbFP16,                                          // input (FP32)
                 state.wrapQ,                                          // output Q
                 state.wrapK,                                          // output K
                 state.wrapV,                                          // output V
@@ -271,18 +275,31 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                     context, state.tempFFN, config.dim(), config.rmsNormEps());
         }
 
-        unifiedLayer.task("ffn_rms_apply",
-                TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
-                context, state.wrapXb, state.wrapX,
-                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN);
+//        unifiedLayer.task("ffn_rms_apply",
+//                TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
+//                context, state.wrapXb, state.wrapX,
+//                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN);
+//
+//        // Gate + Up projection with SiLU activation (W1, W3)
+//        unifiedLayer.task("ffn_gate_up",
+//                TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation,
+//                context, state.wrapXb, state.wrapHb,
+//                weights.w1Layered[layerIndex].asHalfFloatArray(),
+//                weights.w3Layered[layerIndex].asHalfFloatArray(),
+//                config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        // Gate + Up projection with SiLU activation (W1, W3)
-        unifiedLayer.task("ffn_gate_up",
-                TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation,
-                context, state.wrapXb, state.wrapHb,
-                weights.w1Layered[layerIndex].asHalfFloatArray(),
-                weights.w3Layered[layerIndex].asHalfFloatArray(),
-                config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
+        unifiedLayer.task("rms_ffn_gate_up",
+                TransformerComputeKernelsLayered::fusedRmsNormFFNGateUp,
+                context,
+                state.wrapX,                                              // raw input (FP32)
+                state.wrapHb,                                             // output
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), // RMS weights
+                state.tempFFN,                                            // RMS scale factor
+                weights.w1Layered[layerIndex].asHalfFloatArray(),         // W1
+                weights.w3Layered[layerIndex].asHalfFloatArray(),         // W3
+                config.dim(),                                             // input dimension
+                config.hiddenDim(),                                       // output dimension
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Down projection (W2) with residual
         unifiedLayer.task("ffn_down_proj",

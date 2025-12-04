@@ -17,6 +17,77 @@ public class TransformerComputeKernelsLayered {
     public TransformerComputeKernelsLayered() {
     }
 
+    public static void fusedRmsNormFFNGateUp(
+            KernelContext context,
+            FloatArray x,               // raw input (FP32)
+            FloatArray hb,              // output
+            FloatArray rmsWeights,      // RMS norm weights
+            FloatArray rmsScale,        // temp[0] = scale factor
+            HalfFloatArray w1,
+            HalfFloatArray w3,
+            int dim,                    // input dimension
+            int hiddenDim,              // output dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float scale = rmsScale.get(0);
+
+        // Allocate shared memory for normalized input (reused for both W1 and W3)
+        float[] xNorm = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        int rowOffsetW1 = rowId * dim;
+        int rowOffsetW3 = rowId * dim;
+
+        // === W1 matmul with inline normalization ===
+        float sum1 = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            sum1 += w1.get(rowOffsetW1 + j).getFloat32() * normalized;
+        }
+
+        localSum[localId] = sum1;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float result1 = localSum[0];
+
+        // === W3 matmul with inline normalization (same computation) ===
+        float sum3 = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            sum3 += w3.get(rowOffsetW3 + j).getFloat32() * normalized;
+        }
+
+        localSum[localId] = sum3;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float result3 = localSum[0];
+
+        // === SiLU + GLU ===
+        if (localId == 0) {
+            float silu = result1 / (1.0f + TornadoMath.exp(-result1));
+            hb.set(rowId, silu * result3);
+        }
+    }
+
     /**
      * Performs RMS (Root Mean Square) normalization using parallel reduction. This is the first phase of RMS normalization that computes the variance and scaling factor across all work groups.
      *
