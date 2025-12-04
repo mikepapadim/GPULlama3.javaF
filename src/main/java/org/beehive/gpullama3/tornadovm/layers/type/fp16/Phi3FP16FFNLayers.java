@@ -89,8 +89,16 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         int ffnDownGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid ffnDownWorker = WorkerGridFactory.genericWorker(ffnDownGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
+        WorkerGrid splitQKVWorker = WorkerGridFactory.genericWorker(opSize, 128);
+
+        // SplitGateUpAndSiLU worker
+        WorkerGrid splitGateUpSiLUWorker = WorkerGridFactory.genericWorker(config.hiddenDim(), 128);
+
+
         // Map workers to tasks for each layer
         for (int i = 0; i < config.numberOfLayers(); i++) {
+            gridScheduler.addWorkerGrid("layer_" + i + ".splitQKV", splitQKVWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".gateUpSiLU", splitGateUpSiLUWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".qkvmatmul", matmulQkvRowMajorWorker);
