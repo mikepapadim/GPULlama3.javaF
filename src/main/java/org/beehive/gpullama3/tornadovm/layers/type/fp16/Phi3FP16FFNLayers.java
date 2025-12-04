@@ -41,8 +41,6 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         super(taskGraphName, state, weights, config, schedulerType);
         this.phi3State = state;
         this.phi3Config = config;
-        // Calculate opSize for combined QKV buffer
-        // opSize = num_heads * head_dim + 2 * (num_key_value_heads * head_dim) = dim + 2 * kvDim
         this.opSize = config.dim() + 2 * (config.numberOfKeyValueHeads() * config.headSize());
         ffnLayerTaskGraphs = setupFFNLayered();
     }
@@ -55,9 +53,6 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         // Fused RMS + QKV matmul worker
         int fusedQkvGlobal = opSize * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid fusedQkvWorker = WorkerGridFactory.genericWorker(fusedQkvGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
-
-        // SplitQKV worker
-        WorkerGrid splitQKVWorker = WorkerGridFactory.genericWorker(opSize, 128);
 
         // Fused RoPE + cache copy worker (Phi3 uses dim/2 pattern)
         WorkerGrid ropeWorker = WorkerGridFactory.genericWorker(config.dim() / 2, 128);
@@ -72,9 +67,6 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         // Fused RMS + FFN gate/up worker
         int fusedFFNGlobal = (2 * config.hiddenDim()) * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid fusedFFNWorker = WorkerGridFactory.genericWorker(fusedFFNGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
-
-        // SplitGateUpAndSiLU worker
-        WorkerGrid splitGateUpSiLUWorker = WorkerGridFactory.genericWorker(config.hiddenDim(), 128);
 
         // FFN down projection worker
         int ffnDownGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
