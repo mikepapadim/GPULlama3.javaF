@@ -564,5 +564,138 @@ public class Qwen3Kernels {
         }
     }
 
+    /**
+     * Fused Q and K RMSNorm for Qwen3.
+     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
+     *
+     * Workgroup assignment:
+     *   - Workgroups [0, nHeads): Process Q heads
+     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
+     *
+     * Each workgroup computes reduction and applies normalization for one head.
+     */
+    /**
+     * Fused Q and K RMSNorm for Qwen3.
+     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
+     *
+     * Workgroup assignment:
+     *   - Workgroups [0, nHeads): Process Q heads
+     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
+     */
+    /**
+     * Fused Q and K RMSNorm for Qwen3.
+     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
+     *
+     * Workgroup assignment:
+     *   - Workgroups [0, nHeads): Process Q heads
+     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
+     */
+    /**
+     * Fused Q and K RMSNorm for Qwen3.
+     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
+     *
+     * Workgroup assignment:
+     *   - Workgroups [0, nHeads): Process Q heads
+     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
+     */
+    /**
+     * Fused Q and K RMSNorm for Qwen3.
+     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
+     *
+     * Workgroup assignment:
+     *   - Workgroups [0, nHeads): Process Q heads
+     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
+     */
+    public static void fusedQKRmsNorm(
+            KernelContext context,
+            FloatArray q,                // Q vector (in/out)
+            FloatArray k,                // K vector (in/out)
+            FloatArray qWeights,         // Q RMS norm weights
+            FloatArray kWeights,         // K RMS norm weights
+            int nHeads,                  // number of Q heads
+            int nHeadKv,                 // number of K heads
+            int nEmbdHead,               // head dimension
+            int localMemSize,            // local memory size (must be fixed)
+            float rmsNormEps) {
+
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = context.localGroupSizeX;
+
+        // Allocate local memory with FIXED size parameter
+        float[] localSum = context.allocateFloatLocalArray(localMemSize);
+
+        if (groupId < nHeads) {
+            // === Process Q head ===
+            int headOffset = groupId * nEmbdHead;
+
+            // Step 1: Compute sum of squares (reduction)
+            float partialSum = 0.0f;
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float val = q.get(headOffset + i);
+                partialSum += val * val;
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            // Parallel reduction
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            // Compute normalization factor
+            float ss = localSum[0];
+            ss = ss / nEmbdHead + rmsNormEps;
+            ss = 1.0f / TornadoMath.sqrt(ss);
+
+            context.localBarrier();
+
+            // Step 2: Apply normalization with weights (in-place)
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float normalized = ss * q.get(headOffset + i);
+                q.set(headOffset + i, qWeights.get(i) * normalized);
+            }
+
+        } else if (groupId < nHeads + nHeadKv) {
+            // === Process K head ===
+            int headIdx = groupId - nHeads;
+            int headOffset = headIdx * nEmbdHead;
+
+            // Step 1: Compute sum of squares (reduction)
+            float partialSum = 0.0f;
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float val = k.get(headOffset + i);
+                partialSum += val * val;
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            // Parallel reduction
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            // Compute normalization factor
+            float ss = localSum[0];
+            ss = ss / nEmbdHead + rmsNormEps;
+            ss = 1.0f / TornadoMath.sqrt(ss);
+
+            context.localBarrier();
+
+            // Step 2: Apply normalization with weights (in-place)
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float normalized = ss * k.get(headOffset + i);
+                k.set(headOffset + i, kWeights.get(i) * normalized);
+            }
+        }
+    }
 }
 // @formatter:on

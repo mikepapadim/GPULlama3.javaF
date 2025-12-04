@@ -64,25 +64,13 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
 
         // Q matmul worker (GQA: full query heads)
         int matmulQGlobal = nEmbdHeadK * config.numberOfHeads() * LOCAL_WORK_GROUP_SIZE_ALLOC;
-        WorkerGrid matmulQRowMajorWorker = WorkerGridFactory.genericWorker(matmulQGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        // KV matmul worker (GQA: reduced KV heads)
-        int matmulKVGlobal = nEmbdGqa * LOCAL_WORK_GROUP_SIZE_ALLOC;
-        WorkerGrid matmulKVRowMajorWorker = WorkerGridFactory.genericWorker(matmulKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
-
-        // Q current worker
-        WorkerGrid qCurWorker = WorkerGridFactory.genericWorker(config.numberOfHeads() * nEmbdHead, nEmbdHead);
-
-        // K current worker
-        WorkerGrid kCurWorker = WorkerGridFactory.genericWorker(config.numberOfKeyValueHeads() * nEmbdHead, nEmbdHead);
-
-        // RoPE worker (2D: heads x embedding_head/2)
         WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(config.numberOfHeads(), nEmbdHead);
 
         // Parallel attention worker
         WorkerGrid parallelAttentionWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), nEmbdHead);
 
-        // Matmul1 worker (output projection)
+        // attn_output_proj worker (output projection)
         int matmul1Global = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid matmul1Worker = WorkerGridFactory.genericWorker(matmul1Global, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
@@ -92,7 +80,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
 
         int projectionTwoGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid projectionTwoWorker = WorkerGridFactory.genericWorker(projectionTwoGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
-
+        int qkRmsNormGroups = config.numberOfHeads() + config.numberOfKeyValueHeads();
+        WorkerGrid qkRmsNormWorker = WorkerGridFactory.genericWorker(qkRmsNormGroups * nEmbdHead, nEmbdHead);
 
         int qDim0 = nEmbdHeadK * qwen3Config.numberOfHeads();
         int kvDim0 = nEmbdGqa;
@@ -103,32 +92,22 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
 
         // Map workers to tasks for each layer
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            gridScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
 
-            gridScheduler.addWorkerGrid("layer_" + i + ".qmatmul", matmulQRowMajorWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".kmatmul", matmulKVRowMajorWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".vmatmul", matmulKVRowMajorWorker);
-
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
-
-            gridScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Qcur", qCurWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Qcur", qCurWorker);
-
-            gridScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Kcur", kCurWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Kcur", kCurWorker);
-
+            
+            gridScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
 
             gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
 
             gridScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNW1W3Worker);
 
             gridScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".matmul1", matmul1Worker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
 
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
-//            gridScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", fusedFFNW1W3Worker);
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", projectionTwoWorker);
         }
 
@@ -197,7 +176,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 weights.w3Layered[layerIndex].asHalfFloatArray() //
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
-        unifiedLayer.task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, qwen3State.temp, qwen3State.wrapX, // in
+        unifiedLayer.task("attn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, qwen3State.temp, qwen3State.wrapX, // in
                 qwen3Config.dim(), qwen3Config.rmsNormEps(), qwen3State.localSize);
 
         unifiedLayer.task("attn_rms_qkv_projection", Qwen3Kernels::fusedRmsNormQKVMatmul,
@@ -216,23 +195,17 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 kvDim,                       // KV output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        // Qcur rmsnorm
-        unifiedLayer.task("rmsnormReduction_Qcur", Qwen3Kernels::rmsnormWithParallelOffset, context, qwen3State.tempQcur,         // output
-                        qwen3State.wrapQ,            // input
-                        qwen3State.localSize,        // currently 128, should be variable of global nEmbHead
-                        nEmbdHead,                   // for normalization
-                        qwen3Config.rmsNormEps())    // for normalization
-                .task("rmsnormMapIndexInPlace_Qcur", Qwen3Kernels::rmsnormMapIndexInPlaceWithParallelOffset, context, qwen3State.wrapQ,        // output
-                        weights.rms_att_QNormLayered[layerIndex].asFloatArray(), nEmbdHead, qwen3State.tempQcur);
-
-        // Kcur rmsnorm
-        unifiedLayer.task("rmsnormReduction_Kcur", Qwen3Kernels::rmsnormWithParallelOffset, context, qwen3State.tempKcur,         // output
-                        qwen3State.wrapK,            // input
-                        qwen3State.localSize,        // currently 128, should be variable of global nEmbHead
-                        nEmbdHead,                   // for normalization
-                        qwen3Config.rmsNormEps())    // for normalization
-                .task("rmsnormMapIndexInPlace_Kcur", Qwen3Kernels::rmsnormMapIndexInPlaceWithParallelOffset, context, qwen3State.wrapK,        // output
-                        weights.rms_att_KNormLayered[layerIndex].asFloatArray(), nEmbdHead, qwen3State.tempKcur);
+        unifiedLayer.task("qk_rmsnorm", Qwen3Kernels::fusedQKRmsNorm,
+                context,
+                qwen3State.wrapQ,
+                qwen3State.wrapK,
+                weights.rms_att_QNormLayered[layerIndex].asFloatArray(),
+                weights.rms_att_KNormLayered[layerIndex].asFloatArray(),
+                qwen3Config.numberOfHeads(),
+                qwen3Config.numberOfKeyValueHeads(),
+                nEmbdHead,
+                nEmbdHead,                    // localMemSize = nEmbdHead (e.g., 128)
+                qwen3Config.rmsNormEps());
 
         unifiedLayer.task("rope_and_kv_cache", Qwen3Kernels::ropeRotationWithCacheCopy,
                 context,
@@ -252,7 +225,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3State.wrapXb,               // out
                 qwen3Config.numberOfHeads(), nEmbdHead, nEmbdGqa, gqa, qwen3State.positionHolder, layerIndex, qwen3Config.contextLength());
 
-        unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, qwen3State.wrapXb,                           // vector
+        unifiedLayer.task("attn_output_proj", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, qwen3State.wrapXb,                           // vector
                 qwen3State.wrapX,                            // out, should be [1024]
                 weights.woLayered[layerIndex].asHalfFloatArray(),               // matrix
                 nEmbdHeadK * qwen3Config.numberOfHeads(),    // dim1 = 2048
