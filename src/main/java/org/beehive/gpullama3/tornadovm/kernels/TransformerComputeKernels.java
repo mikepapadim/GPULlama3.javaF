@@ -117,4 +117,12 @@ public class TransformerComputeKernels {
         output.set(gid, weights.get(gid) * (ss * output.get(gid)));
     }
 
+    public static void mapContextWithQuantizeLogits(KernelContext context, HalfFloatArray output, FloatArray input, FloatArray weights, FloatArray temp) {
+        int gid = context.globalIdx;
+        float ss = temp.get(0);
+        float in = ss * input.get(gid);
+        float interim =  weights.get(gid) * in;
+        output.set(gid, new HalfFloat(interim));
+    }
+
 }

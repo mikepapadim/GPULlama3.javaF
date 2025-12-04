@@ -967,6 +967,27 @@ public class TransformerComputeKernelsLayered {
      */
 
 
+    public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, HalfFloatArray x, HalfFloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= d) {
+            return;
+        }
+
+        float sum1 = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, w1, n);
+        float sum3 = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, w3, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float silu = siluActivation(sum1);  // Using the new SiLU method
+            float result = silu * sum3;
+            hb.set(rowId, new HalfFloat(result));
+        }
+    }
+
+
     public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, FloatArray x, FloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
         int rowId = context.groupIdx;
