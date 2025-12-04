@@ -94,6 +94,96 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
     }
 
     // @formatter:off
+    /**
+     * Transformer Layer Task Flow (LlamaFP16FFNLayers)
+     *
+     * ══════════════════════════════════════════════════════════════════════════════
+     *                              ATTENTION BLOCK
+     * ══════════════════════════════════════════════════════════════════════════════
+     *
+     *   wrapX (FP32)
+     *      │
+     *      ▼
+     *  ┌─────────────────┐
+     *  │ attn_rms_reduce │──▶ temp (partial sums)
+     *  └────────┬────────┘
+     *           │
+     *           ▼ (optional: NON_NVIDIA only)
+     *  ┌──────────────────┐
+     *  │ attn_rms_finalize│──▶ temp (final scale)
+     *  └────────┬─────────┘
+     *           │
+     *           ▼
+     *  ┌─────────────────────┐
+     *  │ attn_rms_apply_fp16 │──▶ wrapXbFP16 (normalized, FP16)
+     *  └──────────┬──────────┘
+     *             │
+     *             ▼
+     *  ┌────────────────┐      ┌─────────────────────────────┐
+     *  │ qkv_projection │──────▶│ wrapQ, wrapK, wrapV (FP32) │
+     *  └───────┬────────┘      └─────────────────────────────┘
+     *          │
+     *          ▼
+     *  ┌───────────────────┐   ┌─────────────────────────────────────┐
+     *  │ rope_and_kv_cache │───▶│ Q,K rotated + KeyCache, ValueCache │
+     *  └─────────┬─────────┘   └─────────────────────────────────────┘
+     *            │
+     *            ▼
+     *  ┌───────────┐
+     *  │ attention │──▶ wrapXb (attention output)
+     *  └─────┬─────┘
+     *        │
+     *        ▼
+     *  ┌──────────────────┐
+     *  │ attn_output_proj │──▶ wrapX += Wo · wrapXb (residual connection)
+     *  └────────┬─────────┘
+     *           │
+     * ══════════╪═══════════════════════════════════════════════════════════════════
+     *           │                    FFN BLOCK
+     * ══════════╪═══════════════════════════════════════════════════════════════════
+     *           │
+     *           ▼
+     *  ┌────────────────┐
+     *  │ ffn_rms_reduce │──▶ tempFFN (partial sums)
+     *  └───────┬────────┘
+     *          │
+     *          ▼ (optional: NON_NVIDIA only)
+     *  ┌─────────────────┐
+     *  │ ffn_rms_finalize│──▶ tempFFN (final scale)
+     *  └────────┬────────┘
+     *           │
+     *           ▼
+     *  ┌───────────────┐
+     *  │ ffn_rms_apply │──▶ wrapXb (normalized, FP32)
+     *  └───────┬───────┘
+     *          │
+     *          ▼
+     *  ┌─────────────┐
+     *  │ ffn_gate_up │──▶ wrapHb = SiLU(xb·W1) ⊙ (xb·W3)
+     *  └──────┬──────┘
+     *         │
+     *         ▼
+     *  ┌──────────────┐
+     *  │ ffn_down_proj│──▶ wrapX += W2 · wrapHb (residual connection)
+     *  └──────┬───────┘
+     *         │
+     *         ▼
+     *     wrapX (FP32) ──▶ [next layer or logits]
+     *
+     * ══════════════════════════════════════════════════════════════════════════════
+     *
+     * Task Count: 10 tasks (8 if NVIDIA, skipping rms_finalize steps)
+     *
+     * Data Flow Summary:
+     *   Input:  wrapX (FP32) - hidden state from previous layer
+     *   Output: wrapX (FP32) - updated hidden state with residual connections
+     *
+     * Key Fusion Points:
+     *   • qkv_projection: Fused Q/K/V matmuls (3→1 kernel)
+     *   • rope_and_kv_cache: Fused RoPE rotation + cache write (2→1 kernel)
+     *   • ffn_gate_up: Fused W1/W3 matmuls + SiLU + GLU (3→1 kernel)
+     *
+     */
     TaskGraph setupSingleFFNLayer(LlamaTornadoWeights weights, Configuration config, int layerIndex) {
         var layerTaskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
