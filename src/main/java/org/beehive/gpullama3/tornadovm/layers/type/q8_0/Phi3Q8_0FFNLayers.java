@@ -69,6 +69,7 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
         WorkerGrid copyToCachesWorker = WorkerGridFactory.genericWorker(config.dim(), 128);
         WorkerGrid splitGateUpSiLUWorker = WorkerGridFactory.genericWorker(config.hiddenDim(), 128);
         WorkerGrid splitQKVWorker = WorkerGridFactory.genericWorker(opSize, 128);
+
         for (int i = 0; i < config.numberOfLayers(); i++) {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qkvmatmul", qkvDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".splitQKV", splitQKVWorker);
