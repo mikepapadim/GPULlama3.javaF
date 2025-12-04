@@ -207,16 +207,20 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
      *   • Inline SiLU+GLU: No intermediate wrapHb buffer needed
      *
      */
-    // @formatter:on
+    // @formatter:off
     TaskGraph setupSinglePhi3FFNLayer(Phi3TornadoWeights weights, int layerIndex) {
         var taskGraphName = "layer_" + layerIndex;
         var unifiedLayer = new TaskGraph(taskGraphName);
         unifiedLayer.consumeFromDevice(phi3State.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Attention weights
-                weights.rms_att_weightLayered[layerIndex].asFloatArray(), weights.wqkvLayered[layerIndex].asHalfFloatArray(), weights.woLayered[layerIndex].asHalfFloatArray(),
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(),
+                weights.wqkvLayered[layerIndex].asHalfFloatArray(),
+                weights.woLayered[layerIndex].asHalfFloatArray(),
                 // FFN weights
-                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), weights.wUpLayered[layerIndex].asHalfFloatArray(), weights.wDownLayered[layerIndex].asHalfFloatArray());
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
+                weights.wUpLayered[layerIndex].asHalfFloatArray(),
+                weights.wDownLayered[layerIndex].asHalfFloatArray());
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
         // ═══════════════════════════════════════════════════════════════════════
