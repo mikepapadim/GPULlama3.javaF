@@ -70,7 +70,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
 
         // RoPE worker (2D: heads x embedding_head/2)
         int ic = config.headSize() / 2;
-        WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(config.numberOfHeads(), config.headSize());
+//        WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(config.numberOfHeads(), config.headSize());
 
         // Copy to cache worker
         WorkerGrid copyToCachesWorker = WorkerGridFactory.genericWorker(config.kvDim(), 32);
@@ -94,6 +94,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         // SplitGateUpAndSiLU worker
         WorkerGrid splitGateUpSiLUWorker = WorkerGridFactory.genericWorker(config.hiddenDim(), 128);
 
+        WorkerGrid ropeWorker = WorkerGridFactory.genericWorker(config.dim() / 2, 128);
 
         // Map workers to tasks for each layer
         for (int i = 0; i < config.numberOfLayers(); i++) {
