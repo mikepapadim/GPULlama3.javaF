@@ -3,7 +3,10 @@ package org.beehive.gpullama3.inference.state;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+
+import java.awt.font.TextHitInfo;
 
 /**
  * Represents the base state structure used during LLM inference.
@@ -57,6 +60,9 @@ public abstract class State {
     public final FloatArray wrapValueCache; // FloatArray wrapper for the value cache, optimized for TornadoVM.
     public final IntArray positionHolder;
 
+
+    public final HalfFloatArray wrapXbFP16;         // FloatArray wrapper for xb (residual branch activation), optimized for TornadoVM usage.
+
     // store inter
     public int localSize;
     public FloatArray temp;         // Temporary buffer for intermediate calculations, size adjusted for local workgroup size.
@@ -64,6 +70,7 @@ public abstract class State {
     public FloatArray tempLogits;   // Temporary buffer for logits calculations, size adjusted for local workgroup size.
     public int latestToken;         // Keeps track of the most recent token processed by the model. Useful for stateful or autoregressive models.
 
+    public HalfFloatArray wrapXFP16;
     /** last index in previous block */
 
     protected State(Configuration config, int batchsize) {
@@ -98,6 +105,9 @@ public abstract class State {
         this.wrapK = fields.wrapK;
         this.wrapV = fields.wrapV;
 
+        this.wrapXFP16 = fields.wrapXFP16;
+        this.wrapXbFP16 = fields.wrapXbFP16;
+
         // dim vs kvdim
         this.wrapKeyCache = fields.wrapKeyCache;
         this.wrapValueCache = fields.wrapValueCache;
@@ -121,6 +131,7 @@ public abstract class State {
         public FloatArray wrapQ, wrapK, wrapV, wrapAtt, wrapKeyCache, wrapValueCache;
         public IntArray positionHolder;
         public FloatArray temp, tempFFN, tempLogits;
+        public HalfFloatArray wrapXFP16, wrapXbFP16;
     }
 
     @Override

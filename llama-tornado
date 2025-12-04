@@ -422,7 +422,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     debug_group.add_argument(
         "--profiler-dump-dir",
-        default="/home/mikepapadim/repos/gpu-llama3.java/prof.json",
+        default=None,
         help="Directory for profiler output",
     )
 
@@ -497,6 +497,11 @@ def main():
     load_env_from_script()
     parser = create_parser()
     args = parser.parse_args()
+
+    # Set default profiler log path relative to LLAMA_ROOT
+    if args.profiler_dump_dir is None:
+        llama_root = os.environ.get("LLAMA_ROOT")
+        args.profiler_dump_dir = os.path.join(llama_root, "profiler-log.json")
 
     # Set default seed if not provided
     if args.seed is None:

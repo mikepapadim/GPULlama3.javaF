@@ -3,6 +3,7 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
@@ -14,6 +15,77 @@ public class TransformerComputeKernelsLayered {
      * Default constructor for the TransformerComputeKernelsLayered class.
      */
     public TransformerComputeKernelsLayered() {
+    }
+
+    public static void fusedRmsNormFFNGateUp(
+            KernelContext context,
+            FloatArray x,               // raw input (FP32)
+            FloatArray hb,              // output
+            FloatArray rmsWeights,      // RMS norm weights
+            FloatArray rmsScale,        // temp[0] = scale factor
+            HalfFloatArray w1,
+            HalfFloatArray w3,
+            int dim,                    // input dimension
+            int hiddenDim,              // output dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float scale = rmsScale.get(0);
+
+        // Allocate shared memory for normalized input (reused for both W1 and W3)
+        float[] xNorm = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        int rowOffsetW1 = rowId * dim;
+        int rowOffsetW3 = rowId * dim;
+
+        // === W1 matmul with inline normalization ===
+        float sum1 = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            sum1 += w1.get(rowOffsetW1 + j).getFloat32() * normalized;
+        }
+
+        localSum[localId] = sum1;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float result1 = localSum[0];
+
+        // === W3 matmul with inline normalization (same computation) ===
+        float sum3 = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            sum3 += w3.get(rowOffsetW3 + j).getFloat32() * normalized;
+        }
+
+        localSum[localId] = sum3;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float result3 = localSum[0];
+
+        // === SiLU + GLU ===
+        if (localId == 0) {
+            float silu = result1 / (1.0f + TornadoMath.exp(-result1));
+            hb.set(rowId, silu * result3);
+        }
     }
 
     /**
@@ -136,6 +208,69 @@ public class TransformerComputeKernelsLayered {
             destKeyCache.set(destOffset + i, srcKey.get(i));
             destValueCache.set(destOffset + i, srcValue.get(i));
         }
+    }
+
+    /**
+     * Fused RoPE rotation with KV cache copy.
+     * Eliminates separate copyToCaches kernel.
+     *
+     * - Rotates Q (full dim)
+     * - Rotates K and writes directly to keyCache
+     * - Copies V directly to valueCache (no rotation needed)
+     */
+    public static void ropeRotationWithCacheCopy(
+            KernelContext context,
+            IntArray positionHolder,
+            FloatArray sq,              // Q vector (in/out)
+            FloatArray sk,              // K vector (in/out)
+            FloatArray sv,              // V vector (in only)
+            FloatArray keyCache,        // Key cache (out)
+            FloatArray valueCache,      // Value cache (out)
+            int kvDim,
+            int headSize,
+            int layer,
+            int contextLength) {
+
+        int i = context.globalIdx * 2;
+        int pos = positionHolder.get(0);
+
+        // Bounds check for Q rotation (Q has dim elements, processed in pairs)
+        if (i + 1 < sq.getSize()) {
+            // RoPE frequency calculation
+            int head_dim = i % headSize;
+            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
+
+            // Rotate Q
+            float v0q = sq.get(i);
+            float v1q = sq.get(i + 1);
+            sq.set(i, v0q * fcr - v1q * fci);
+            sq.set(i + 1, v0q * fci + v1q * fcr);
+
+            // Rotate K AND write to cache (only for kvDim elements)
+            if (i + 1 < kvDim) {
+                float v0k = sk.get(i);
+                float v1k = sk.get(i + 1);
+                float rotated0 = v0k * fcr - v1k * fci;
+                float rotated1 = v0k * fci + v1k * fcr;
+
+                // Write rotated K back to sk
+                sk.set(i, rotated0);
+                sk.set(i + 1, rotated1);
+
+                // Direct cache write (fused - no separate copy kernel!)
+                int cacheOffset = layer * contextLength * kvDim + pos * kvDim;
+                keyCache.set(cacheOffset + i, rotated0);
+                keyCache.set(cacheOffset + i + 1, rotated1);
+
+                // Copy V to cache (V doesn't need rotation)
+                valueCache.set(cacheOffset + i, sv.get(i));
+                valueCache.set(cacheOffset + i + 1, sv.get(i + 1));
+            }
+        }
+
     }
 
     public static void splitQKV(FloatArray qkv, FloatArray q, FloatArray k, FloatArray v, int dimQ, int dimKV) {
@@ -350,7 +485,7 @@ public class TransformerComputeKernelsLayered {
         int pos = positionHolder.get(0);
         int loff = layer * contextLength * kvDim;
         int kvHeadIdx = h / kvMul;
-        int BLOCK_SIZE_C = 8;
+        int BLOCK_SIZE_C = 16;
 
         // Allocate shared memory for tiled computation
         float[] q_shared = context.allocateFloatLocalArray(headSize);
@@ -690,6 +825,133 @@ public class TransformerComputeKernelsLayered {
             hb.set(rowId, sum);
         }
     }
+
+    /**
+     * Fused Q/K/V matrix-vector multiplication.
+     * Reduces kernel launch overhead and improves input vector cache utilization.
+     *
+     * Workgroup assignment:
+     *   - rowId [0, dim): Q projection
+     *   - rowId [dim, dim+kvDim): K projection
+     *   - rowId [dim+kvDim, dim+2*kvDim): V projection
+     */
+    public static void fusedQKVMatmulX(
+            KernelContext context,
+            HalfFloatArray x,           // input vector (FP16)
+            FloatArray q,               // output Q (FP32)
+            FloatArray k,               // output K (FP32)
+            FloatArray v,               // output V (FP32)
+            HalfFloatArray wq,          // Q weight matrix
+            HalfFloatArray wk,          // K weight matrix
+            HalfFloatArray wv,          // V weight matrix
+            int dim,                    // model dimension (Q output size)
+            int kvDim,                  // KV dimension (K/V output size)
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        // Allocate local memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowId < dim) {
+            // ========== Q projection ==========
+            int rowOffset = rowId * dim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < dim; j += localWorkGroupSize) {
+                partialSum += wq.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                q.set(rowId, localSum[0]);
+            }
+
+        } else if (rowId < dim + kvDim) {
+            // ========== K projection ==========
+            int kRow = rowId - dim;
+            int rowOffset = kRow * dim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < dim; j += localWorkGroupSize) {
+                partialSum += wk.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                k.set(kRow, localSum[0]);
+            }
+
+        } else if (rowId < dim + 2 * kvDim) {
+            // ========== V projection ==========
+            int vRow = rowId - dim - kvDim;
+            int rowOffset = vRow * dim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < dim; j += localWorkGroupSize) {
+                partialSum += wv.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                v.set(vRow, localSum[0]);
+            }
+        }
+    }
+
+    // @formatter:off
+    public static void matrixVectorGeneric(
+            KernelContext context,
+            HalfFloatArray x,
+            FloatArray hb,                  // output
+            HalfFloatArray w,
+            int dim1,                       // inner loop
+            int dim0,                       // outer loop
+            int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = localWorkGroupSize;
+
+        // Early exit if this workgroup is beyond our output dimension
+        if (rowId >= dim0) {
+            return;
+        }
+        float sum = matrixVectorRowMajorOptimized(context, localSize, x, w, dim1);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            hb.set(rowId, sum);
+        }
+    }
     // @formatter:on
 
     /**
@@ -732,6 +994,26 @@ public class TransformerComputeKernelsLayered {
         }
     }
 
+    public static void matrixVectorGenericWithResidual(KernelContext context, HalfFloatArray x, FloatArray hb, HalfFloatArray w, int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = localWorkGroupSize;
+
+        // Early exit if this workgroup is beyond our output dimension
+        if (rowId >= d) {
+            return;
+        }
+
+        float sum = matrixVectorRowMajorOptimized(context, localSize, x, w, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float result = hb.get(rowId) + sum;
+            hb.set(rowId, result);
+        }
+    }
+
     /**
      * Fused feed-forward network with SiLU activation and GLU gating. Implements the SwiGLU variant used in LLaMA-style models.
      *
@@ -754,6 +1036,29 @@ public class TransformerComputeKernelsLayered {
      * @param localWorkGroupSize
      *         Work group size
      */
+
+
+    public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, HalfFloatArray x, HalfFloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= d) {
+            return;
+        }
+
+        float sum1 = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, w1, n);
+        float sum3 = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, w3, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float silu = siluActivation(sum1);  // Using the new SiLU method
+            float result = silu * sum3;
+            hb.set(rowId, new HalfFloat(result));
+        }
+    }
+
+
     public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, FloatArray x, FloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
         int rowId = context.groupIdx;
@@ -770,6 +1075,26 @@ public class TransformerComputeKernelsLayered {
         if (localId == 0) {
             float silu = siluActivation(sum1);  // Using the new SiLU method
             float result = silu * sum3;
+            hb.set(rowId, result);
+        }
+    }
+
+    public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, HalfFloatArray x, FloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= d) {
+            return;
+        }
+
+        HalfFloat sum1 = matrixVectorRowMajorOptimizedFHF(context, localWorkGroupSize, x, w1, n);
+        HalfFloat sum3 = matrixVectorRowMajorOptimizedFHF(context, localWorkGroupSize, x, w3, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float silu = siluActivation(sum1.getFloat32());  // Using the new SiLU method
+            float result = silu * sum3.getFloat32();
             hb.set(rowId, result);
         }
     }
@@ -877,6 +1202,214 @@ public class TransformerComputeKernelsLayered {
 
         return localSum[0];
     }
+
+    public static HalfFloat matrixVectorRowMajorOptimizedFHF(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        // Allocate local memory for reduction
+        HalfFloat[] localSum = context.allocateHalfFloatLocalArray(localSize);
+
+        int rowOffset = rowId * n;
+
+        // Each thread calculates partial dot product
+        float partialSum = 0.0f;
+        //        HalfFloat partialSum = new HalfFloat(0f);
+        for (int j = localId; j < n; j += localSize) {
+            int matrixIdx = rowOffset + j;
+            //            HalfFloat mul = HalfFloat.mult(w.get(matrixIdx), x.get(j));
+            partialSum += w.get(matrixIdx).getFloat32() * x.get(j).getFloat32();
+            //            partialSum = HalfFloat.add(partialSum, mul);
+        }
+
+
+        // Store partial sum in local memory
+        localSum[localId] = new HalfFloat(partialSum);
+        context.localBarrier();
+
+        // Parallel reduction within workgroup
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] = HalfFloat.add(localSum[localId], localSum[localId + stride]);
+//                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        return localSum[0];
+    }
+
+    public static float matrixVectorRowMajorOptimizedF(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        // Allocate local memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localSize);
+
+        int rowOffset = rowId * n;
+
+        // Each thread calculates partial dot product
+        float partialSum = 0.0f;
+//        HalfFloat partialSum = new HalfFloat(0f);
+        for (int j = localId; j < n; j += localSize) {
+            int matrixIdx = rowOffset + j;
+//            HalfFloat mul = HalfFloat.mult(w.get(matrixIdx), x.get(j));
+            partialSum += w.get(matrixIdx).getFloat32() * x.get(j).getFloat32();
+//            partialSum = HalfFloat.add(partialSum, mul);
+        }
+
+
+        // Store partial sum in local memory
+        localSum[localId] = partialSum;
+        context.localBarrier();
+
+        // Parallel reduction within workgroup
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        return localSum[0];
+    }
+
+    public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize,
+            HalfFloatArray x, HalfFloatArray w, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        float[] localSum = context.allocateFloatLocalArray(localSize);
+
+        int rowOffset = rowId * n;
+        float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, sum3 = 0.0f;
+
+        int stride = localSize;
+        int stride2 = localSize << 1;
+        int stride3 = localSize * 3;
+        int stride4 = localSize << 2;
+
+        // Already coalesced: thread 0 reads idx 0, thread 1 reads idx 1, etc.
+        int j = localId;
+        int limit = n - stride3;
+
+        for (; j < limit; j += stride4) {
+            int base = rowOffset + j;
+            // Hoist x.get() calls - they're reused across all rows
+            float x0 = x.get(j).getFloat32();
+            float x1 = x.get(j + stride).getFloat32();
+            float x2 = x.get(j + stride2).getFloat32();
+            float x3 = x.get(j + stride3).getFloat32();
+
+            sum0 += w.get(base).getFloat32() * x0;
+            sum1 += w.get(base + stride).getFloat32() * x1;
+            sum2 += w.get(base + stride2).getFloat32() * x2;
+            sum3 += w.get(base + stride3).getFloat32() * x3;
+        }
+
+        for (; j < n; j += stride) {
+            sum0 += w.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+        }
+
+        localSum[localId] = (sum0 + sum1) + (sum2 + sum3);
+        context.localBarrier();
+
+        // Reduction with minimal barriers
+        for (int s = localSize >> 1; s > 0; s >>= 1) {
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
+            context.localBarrier();
+        }
+
+        return localSum[0];
+    }
+
+    public static void fusedQKVMatmul(
+            KernelContext context,
+            HalfFloatArray x,           // input (read once!)
+            FloatArray q, FloatArray k, FloatArray v,  // outputs
+            HalfFloatArray wq, HalfFloatArray wk, HalfFloatArray wv,
+            int dim, int kvDim, int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        // Determine which output this workgroup computes
+        int totalRows = dim + 2 * kvDim;  // Q rows + K rows + V rows
+
+        if (rowId < dim) {
+            // Q projection
+            float sum = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, wq, dim);
+            if (localId == 0) q.set(rowId, sum);
+        } else if (rowId < dim + kvDim) {
+            // K projection
+            int kRow = rowId - dim;
+            float sum = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, wk, dim);
+            if (localId == 0) k.set(kRow, sum);
+        } else {
+            // V projection
+            int vRow = rowId - dim - kvDim;
+            float sum = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, wv, dim);
+            if (localId == 0) v.set(vRow, sum);
+        }
+    }
+
+
+public static float matrixVectorRowMajorOptimizedx(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+    int rowId = context.groupIdx;
+    int localId = context.localIdx;
+
+    // Allocate local memory for reduction
+    float[] localSum = context.allocateFloatLocalArray(localSize);
+
+    int rowOffset = rowId * n;
+
+    // Each thread calculates partial dot product - UNROLLED BY 4
+    float sum0 = 0.0f;
+    float sum1 = 0.0f;
+    float sum2 = 0.0f;
+    float sum3 = 0.0f;
+
+    int j = localId;
+    int stride = localSize;
+    int stride4 = localSize << 2;  // localSize * 4
+    int limit = n - (stride * 3);  // Safe limit for 4 elements
+
+    // Main loop unrolled by 4 with separate accumulators
+    for (; j < limit; j += stride4) {
+        int base = rowOffset + j;
+        int j1 = j + stride;
+        int j2 = j + (stride << 1);
+        int j3 = j + stride * 3;
+
+        sum0 += w.get(base).getFloat32() * x.get(j).getFloat32();
+        sum1 += w.get(base + stride).getFloat32() * x.get(j1).getFloat32();
+        sum2 += w.get(base + (stride << 1)).getFloat32() * x.get(j2).getFloat32();
+        sum3 += w.get(base + stride * 3).getFloat32() * x.get(j3).getFloat32();
+    }
+
+    // Handle remainder
+    for (; j < n; j += stride) {
+        sum0 += w.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+    }
+
+    // Combine accumulators (tree reduction for better precision)
+    float partialSum = (sum0 + sum1) + (sum2 + sum3);
+
+    // Store partial sum in local memory
+    localSum[localId] = partialSum;
+    context.localBarrier();
+
+    // Parallel reduction within workgroup
+    for (int s = localSize >> 1; s > 0; s >>= 1) {
+        if (localId < s) {
+            localSum[localId] += localSum[localId + s];
+        }
+        context.localBarrier();
+    }
+
+    return localSum[0];
+}
 
     // Second kernel - Combines partial sums and computes final normalization
     public static void reductionFinalNormalization(KernelContext context, FloatArray output, int size, float ermsNorm) {

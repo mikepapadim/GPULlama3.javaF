@@ -180,6 +180,7 @@ public class TornadoVMMasterPlan {
     public void forceCopyInReadOnlyDataLayered() {
         // Execute all TornadoVM graphs
         state.wrapX.init(0.0f);
+        state.wrapXFP16.clear();
         state.positionHolder.init(0);
 
         // Execute activation update graph
