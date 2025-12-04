@@ -57,6 +57,7 @@ public record LlamaConfiguration(String type,
             return this; // no change
         }
         return new LlamaConfiguration(
+                this.type,
                 this.dim,
                 this.hiddenDim,
                 this.numberOfLayers,
