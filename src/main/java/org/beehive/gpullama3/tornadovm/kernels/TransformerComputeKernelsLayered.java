@@ -485,7 +485,7 @@ public class TransformerComputeKernelsLayered {
         int pos = positionHolder.get(0);
         int loff = layer * contextLength * kvDim;
         int kvHeadIdx = h / kvMul;
-        int BLOCK_SIZE_C = 8;
+        int BLOCK_SIZE_C = 16;
 
         // Allocate shared memory for tiled computation
         float[] q_shared = context.allocateFloatLocalArray(headSize);

@@ -57,12 +57,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", configDimRowMajorGlobalWorker);
             // === FFN Block ===
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
-//            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_apply", rmsNormWorker);
-//            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_gate_up", configHiddenDimRowMajorWorker);
-
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
-
-
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", configDimRowMajorGlobalWorker);
         }
         return tornadoForwardScheduler;
@@ -157,16 +152,11 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
      *  └────────┬────────┘
      *           │
      *           ▼
-     *  ┌───────────────┐
-     *  │ ffn_rms_apply │──▶ wrapXb (normalized, FP32)
-     *  └───────┬───────┘
-     *          │
-     *          ▼
-     *  ┌─────────────┐
-     *  │ ffn_gate_up │──▶ wrapHb = SiLU(xb·W1) ⊙ (xb·W3)
-     *  └──────┬──────┘
-     *         │
-     *         ▼
+     *  ┌─────────────────┐
+     *  │ rms_ffn_gate_up │──▶ wrapHb = SiLU(RMSNorm(x)·W1) ⊙ (RMSNorm(x)·W3)
+     *  └────────┬────────┘    (fused: RMS apply + W1/W3 matmuls + SiLU + GLU)
+     *           │
+     *           ▼
      *  ┌──────────────┐
      *  │ ffn_down_proj│──▶ wrapX += W2 · wrapHb (residual connection)
      *  └──────┬───────┘
@@ -176,16 +166,16 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
      *
      * ══════════════════════════════════════════════════════════════════════════════
      *
-     * Task Count: 10 tasks (8 if NVIDIA, skipping rms_finalize steps)
+     * Task Count: 9 tasks (7 if NVIDIA, skipping rms_finalize steps)
      *
      * Data Flow Summary:
      *   Input:  wrapX (FP32) - hidden state from previous layer
      *   Output: wrapX (FP32) - updated hidden state with residual connections
      *
      * Key Fusion Points:
-     *   • qkv_projection: Fused Q/K/V matmuls (3→1 kernel)
+     *   • qkv_projection:   Fused Q/K/V matmuls (3→1 kernel)
      *   • rope_and_kv_cache: Fused RoPE rotation + cache write (2→1 kernel)
-     *   • ffn_gate_up: Fused W1/W3 matmuls + SiLU + GLU (3→1 kernel)
+     *   • rms_ffn_gate_up:  Fused RMS apply + W1/W3 matmuls + SiLU + GLU (4→1 kernel)
      *
      */
     TaskGraph setupSingleFFNLayer(LlamaTornadoWeights weights, Configuration config, int layerIndex) {
@@ -274,19 +264,6 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context, state.tempFFN, config.dim(), config.rmsNormEps());
         }
-
-//        unifiedLayer.task("ffn_rms_apply",
-//                TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
-//                context, state.wrapXb, state.wrapX,
-//                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN);
-//
-//        // Gate + Up projection with SiLU activation (W1, W3)
-//        unifiedLayer.task("ffn_gate_up",
-//                TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation,
-//                context, state.wrapXb, state.wrapHb,
-//                weights.w1Layered[layerIndex].asHalfFloatArray(),
-//                weights.w3Layered[layerIndex].asHalfFloatArray(),
-//                config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         unifiedLayer.task("rms_ffn_gate_up",
                 TransformerComputeKernelsLayered::fusedRmsNormFFNGateUp,
