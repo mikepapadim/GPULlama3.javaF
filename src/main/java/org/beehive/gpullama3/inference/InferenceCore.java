@@ -584,6 +584,24 @@ public final class InferenceCore {
         final TornadoWeights weights = (TornadoWeights) model.weights();
 
         MemorySegment.copy(weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment(), (long) token * configuration.dim() * Short.BYTES, state.embeddingX.getSegment(), 0, configuration.dim() * Short.BYTES);
+        switch (weights.getWeightType()) {
+            case F16 -> {
+                MemorySegment tokenEmbeddings = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
+                int bytes = Short.BYTES;
+                MemorySegment.copy(tokenEmbeddings, (long) token * configuration.dim() * bytes, state.embeddingX.getSegment(), 0, (long) configuration.dim() * bytes);
+            }
+            case Q8_0 -> {
+                MemorySegment tokenEmbeddings = weights.getTokenEmbeddingTable().asByteArray().getSegment();
+                int blockSize = 32;
+                int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
+                int blocksPerToken = (configuration.dim() + blockSize - 1) / blockSize; // Ceiling division
+                long bytesPerToken = (long) blocksPerToken * Q8_0_BLOCK_BYTES;
+
+                MemorySegment.copy(tokenEmbeddings, (long) token * bytesPerToken, state.embeddingX.getSegment(), 0, bytesPerToken);
+
+            }
+            default -> throw new IllegalArgumentException("Unsupported weight type: " + weights.getWeightType());
+        }
 
         return tornadoVMMasterPlan.tornadoVMForwardExecuteLayered(position);
     }
