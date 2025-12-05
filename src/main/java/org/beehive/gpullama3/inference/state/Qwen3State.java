@@ -67,10 +67,10 @@ public final class Qwen3State extends State {
 
         // TornadoVM wrappers with Qwen3-specific sizes
 
-        switch (config.modelType()) {
+        switch (config.quantization()) {
             case "FP16" -> fields.createActivationFP16(config.dim());
             case "Q8_0" -> fields.createActivationQ8_0(config.dim());
-            default -> throw new UnsupportedOperationException("Quantization format " + config.modelType());
+            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
         }
 
         fields.wrapX = new FloatArray(config.dim());

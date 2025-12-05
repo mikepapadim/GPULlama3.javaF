@@ -52,7 +52,7 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
         int vocabSize = vocabulary.size();
 
         return new Qwen2Configuration(
-                readModelType(metadata),
+                getModelQuantization(metadata),
                 (int) metadata.get("qwen2.embedding_length"),       // dim
                 (int) metadata.get("qwen2.feed_forward_length"),    // hiddendim
                 (int) metadata.get("qwen2.block_count"),            // numberOfLayers

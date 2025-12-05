@@ -3,7 +3,7 @@ package org.beehive.gpullama3.model.llama;
 import org.beehive.gpullama3.model.Configuration;
 
 // @formatter:off
-public record LlamaConfiguration(String type,
+public record LlamaConfiguration(String quantization,
                                  int dim,
                                  int hiddenDim,
                                  int numberOfLayers,
@@ -15,8 +15,8 @@ public record LlamaConfiguration(String type,
                                  float ropeTheta) implements Configuration {
 
     @Override
-    public String modelType() {
-        return type;
+    public String quantization() {
+        return quantization;
     }
 
     @Override
@@ -57,7 +57,7 @@ public record LlamaConfiguration(String type,
             return this; // no change
         }
         return new LlamaConfiguration(
-                this.type,
+                this.quantization,
                 this.dim,
                 this.hiddenDim,
                 this.numberOfLayers,

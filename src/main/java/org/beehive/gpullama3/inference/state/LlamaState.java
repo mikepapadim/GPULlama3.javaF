@@ -54,13 +54,11 @@ public final class LlamaState extends State {
         fields.wrapHb = new FloatArray(config.hiddenDim());
         fields.wrapHb2 = new FloatArray(config.hiddenDim());
 
-        switch (config.modelType()) {
+        switch (config.quantization()) {
             case "FP16" -> fields.createActivationFP16(config.dim());
             case "Q8_0" -> fields.createActivationQ8_0(config.dim());
-            default -> throw new UnsupportedOperationException("Quantization format " + config.modelType());
+            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
         }
-
-
         fields.wrapLogits = new FloatArray(config.vocabularySize());
         fields.wrapQ = new FloatArray(config.dim());
         fields.wrapK = new FloatArray(config.dim());

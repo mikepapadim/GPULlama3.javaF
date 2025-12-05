@@ -2,7 +2,7 @@ package org.beehive.gpullama3.model.qwen2;
 
 import org.beehive.gpullama3.model.Configuration;
 
-public record Qwen2Configuration(String type,
+public record Qwen2Configuration(String quantization,
                                  int dim,
                                  int hiddenDim,
                                  int numberOfLayers,
@@ -17,8 +17,8 @@ public record Qwen2Configuration(String type,
                                  float rmsNormEps,
                                  float ropeTheta) implements Configuration {
     @Override
-    public String modelType() {
-        return type;
+    public String quantization() {
+        return quantization;
     }
 
     @Override

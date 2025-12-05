@@ -50,7 +50,7 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
         int vocabSize = metadata.containsKey("llama.vocab_size") ? (int) metadata.get("llama.vocab_size") : (int) metadata.get("tokenizer.ggml.tokens.length");
 
         return new MistralConfiguration(
-                readModelType(metadata),
+                getModelQuantization(metadata),
                 (int) metadata.get("llama.embedding_length"),
                 (int) metadata.get("llama.feed_forward_length"),
                 (int) metadata.get("llama.block_count"),

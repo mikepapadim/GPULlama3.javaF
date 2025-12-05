@@ -3,7 +3,7 @@ package org.beehive.gpullama3.model.phi3;
 import org.beehive.gpullama3.model.Configuration;
 
 // @formatter:off
-public record Phi3Configuration(String type,
+public record Phi3Configuration(String quantization,
                                 int dim,
                                 int hiddenDim,
                                 int numberOfLayers,
@@ -14,8 +14,8 @@ public record Phi3Configuration(String type,
                                 float rmsNormEps,
                                 float ropeTheta) implements Configuration {
 
-    @Override public String modelType() {
-    return type;
+    @Override public String quantization() {
+    return quantization;
     }
 
     @Override

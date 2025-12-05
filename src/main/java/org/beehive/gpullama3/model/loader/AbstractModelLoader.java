@@ -35,12 +35,12 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
         this.useTornadovm = useTornadovm;
     }
 
-    protected String readModelType(Map<String, Object> metadata) {
-        int modelTypeAsInt = (int) metadata.get("general.file_type");
-        return switch (modelTypeAsInt) {
+    protected String getModelQuantization(Map<String, Object> metadata) {
+        int modelQuantizationAsInt = (int) metadata.get("general.file_type");
+        return switch (modelQuantizationAsInt) {
             case 1 -> "FP16";
             case 7 -> "Q8_0";
-            default -> throw new UnsupportedOperationException("Quantization format (as int) " + modelTypeAsInt);
+            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + modelQuantizationAsInt + " (as int).");
         };
     }
 
