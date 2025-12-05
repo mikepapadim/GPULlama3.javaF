@@ -55,14 +55,8 @@ public final class LlamaState extends State {
         fields.wrapHb2 = new FloatArray(config.hiddenDim());
 
         switch (config.modelType()) {
-            case "FP16" -> fields.embeddingX = new HalfFloatArray(config.dim());
-            case "Q8_0" -> {
-                int blockSize = 32;
-                int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
-                int blocksNeeded = (config.dim() + blockSize - 1) / blockSize;
-                int q8BytesNeeded = blocksNeeded * Q8_0_BLOCK_BYTES;
-                fields.embeddingX = new ByteArray(q8BytesNeeded);
-            }
+            case "FP16" -> fields.createActivationFP16(config.dim());
+            case "Q8_0" -> fields.createActivationQ8_0(config.dim());
             default -> throw new UnsupportedOperationException("Quantization format " + config.modelType());
         }
 
