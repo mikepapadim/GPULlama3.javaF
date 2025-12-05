@@ -24,7 +24,7 @@ public class Activation extends AbstractLayer {
         KernelContext kernelContext = new KernelContext();
 
         // @formatter:off
-        switch (config.modelType()) {
+        switch (config.quantization()) {
             case "FP16" -> {
                 this.activationUpdate = new TaskGraph(taskGraphHandle)
                         .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
@@ -37,7 +37,7 @@ public class Activation extends AbstractLayer {
                         .task("updateX", TransformerComputeKernels::convertQ8_0toFP32, kernelContext, (ByteArray) state.embeddingX, state.wrapX)
                         .persistOnDevice(state.wrapX);
             }
-            default -> throw new UnsupportedOperationException("Quantization format " + config.modelType());
+            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
         }
         // @formatter:on
     }
