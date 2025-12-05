@@ -67,7 +67,12 @@ public final class Qwen3State extends State {
 
         // TornadoVM wrappers with Qwen3-specific sizes
 
-        fields.embeddingX = new HalfFloatArray(config.dim());
+        switch (config.modelType()) {
+            case "FP16" -> fields.createActivationFP16(config.dim());
+            case "Q8_0" -> fields.createActivationQ8_0(config.dim());
+            default -> throw new UnsupportedOperationException("Quantization format " + config.modelType());
+        }
+
         fields.wrapX = new FloatArray(config.dim());
         fields.wrapXb = new FloatArray(nEmbdHeadK * config.numberOfHeads());
         fields.wrapXb2 = new FloatArray(config.dim());
@@ -77,7 +82,6 @@ public final class Qwen3State extends State {
         fields.wrapQ = new FloatArray(nEmbdHeadK * config.numberOfHeads());
         fields.wrapK = new FloatArray(nEmbdKGqa);
         fields.wrapV = new FloatArray(nEmbdKGqa);
-        fields.embeddingX = new HalfFloatArray(config.dim());
         fields.wrapKeyCache = new FloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
         fields.wrapValueCache = new FloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
         fields.wrapValueCache.init(0.f);
