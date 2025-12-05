@@ -1056,7 +1056,7 @@ public class TransformerComputeKernelsLayered {
             int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
 
             // Load scale (first 2 bytes of block as HalfFloat)
-            HalfFloat scale = q.getHalf(blockByteOffset);
+            HalfFloat scale = q.getHalfFloat(blockByteOffset);
             float scaleFloat = scale.getFloat32();
 
             // Load 4 consecutive quantized values
@@ -1084,7 +1084,7 @@ public class TransformerComputeKernelsLayered {
             int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
 
             // Load scale
-            HalfFloat scale = q.getHalf(blockByteOffset);
+            HalfFloat scale = q.getHalfFloat(blockByteOffset);
             float scaleFloat = scale.getFloat32();
 
             // Load quantized value

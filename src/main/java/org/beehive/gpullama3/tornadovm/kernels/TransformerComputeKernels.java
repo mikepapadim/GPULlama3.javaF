@@ -47,7 +47,7 @@ public class TransformerComputeKernels {
         int blockByteOffset = blockIdx * Q8_0_BLOCK_BYTES;
 
         // Load scale (first 2 bytes of block as HalfFloat)
-        HalfFloat scale = x.getHalf(blockByteOffset);
+        HalfFloat scale = x.getHalfFloat(blockByteOffset);
         float scaleFloat = scale.getFloat32();
 
         // Load quantized value (skip 2-byte scale, then index within block)
