@@ -1159,7 +1159,7 @@ public class TransformerComputeKernelsLayered {
         if (rowId >= dim0) {
             return;
         }
-        float sum = matrixVectorRowMajorOptimizedSingle(context, localSize, x, w, dim1);
+        float sum = matrixVectorRowMajorOptimized(context, localSize, x, w, dim1);
 
         // Thread 0 in each workgroup writes the final result
         if (localId == 0) {
@@ -1538,7 +1538,7 @@ public class TransformerComputeKernelsLayered {
         return localSum[0];
     }
 
-        public static float matrixVectorRowMajorOptimizedSingle(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+        public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
             int rowId = context.groupIdx;
             int localId = context.localIdx;
 
@@ -1570,7 +1570,7 @@ public class TransformerComputeKernelsLayered {
             return localSum[0];
         }
 
-    public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize,
+    public static float matrixVectorRowMajorOptimiz(KernelContext context, int localSize,
             HalfFloatArray x, HalfFloatArray w, int n) {
         int rowId = context.groupIdx;
         int localId = context.localIdx;
