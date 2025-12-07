@@ -60,7 +60,6 @@ public class TransformerComputeKernelsLayered {
         float scale = rmsScale.get(0);
 
         // Allocate shared memory for normalized input (reused for both W1 and W3)
-        float[] xNorm = context.allocateFloatLocalArray(localWorkGroupSize);
         float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
 
         int rowOffsetW1 = rowId * dim;
@@ -1160,7 +1159,7 @@ public class TransformerComputeKernelsLayered {
         if (rowId >= dim0) {
             return;
         }
-        float sum = matrixVectorRowMajorOptimized(context, localSize, x, w, dim1);
+        float sum = matrixVectorRowMajorOptimizedSingle(context, localSize, x, w, dim1);
 
         // Thread 0 in each workgroup writes the final result
         if (localId == 0) {
@@ -1489,7 +1488,7 @@ public class TransformerComputeKernelsLayered {
         return localSum[0];
     }
 
-    public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize,
+    public static float matrixVectorRowMajorOptimizedXX(KernelContext context, int localSize,
             HalfFloatArray x, HalfFloatArray w, int n) {
         int rowId = context.groupIdx;
         int localId = context.localIdx;
@@ -1529,6 +1528,94 @@ public class TransformerComputeKernelsLayered {
         context.localBarrier();
 
         // Reduction with minimal barriers
+        for (int s = localSize >> 1; s > 0; s >>= 1) {
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
+            context.localBarrier();
+        }
+
+        return localSum[0];
+    }
+
+        public static float matrixVectorRowMajorOptimizedSingle(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+            int rowId = context.groupIdx;
+            int localId = context.localIdx;
+
+            // Allocate local memory for reduction
+            float[] localSum = context.allocateFloatLocalArray(localSize);
+
+            int rowOffset = rowId * n;
+
+            HalfFloat partialSum = new HalfFloat(0f);
+            for (int j = localId; j < n; j += localSize) {
+                int matrixIdx = rowOffset + j;
+                HalfFloat mul = HalfFloat.mult(w.get(matrixIdx), x.get(j));
+                partialSum = HalfFloat.add(partialSum, mul);
+            }
+
+
+            // Store partial sum in local memory
+            localSum[localId] = partialSum.getHalfFloatValue();
+            context.localBarrier();
+
+            // Parallel reduction within workgroup
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            return localSum[0];
+        }
+
+    public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize,
+            HalfFloatArray x, HalfFloatArray w, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        float[] localSum = context.allocateFloatLocalArray(localSize);
+
+        int rowOffset = rowId * n;
+
+        // Accumulate in HalfFloat to avoid conversions in inner loop
+        HalfFloat sum0 = new HalfFloat(0f);
+        HalfFloat sum1 = new HalfFloat(0f);
+        HalfFloat sum2 = new HalfFloat(0f);
+        HalfFloat sum3 = new HalfFloat(0f);
+
+        int stride = localSize;
+        int stride2 = localSize << 1;
+        int stride3 = localSize * 3;
+        int stride4 = localSize << 2;
+
+        int j = localId;
+        int limit = n - stride3;
+
+        for (; j < limit; j += stride4) {
+            int base = rowOffset + j;
+
+            // Stay in HalfFloat - no getFloat32() calls
+            HalfFloat x0 = x.get(j);
+            HalfFloat x1 = x.get(j + stride);
+            HalfFloat x2 = x.get(j + stride2);
+            HalfFloat x3 = x.get(j + stride3);
+
+            sum0 = HalfFloat.add(sum0, HalfFloat.mult(w.get(base), x0));
+            sum1 = HalfFloat.add(sum1, HalfFloat.mult(w.get(base + stride), x1));
+            sum2 = HalfFloat.add(sum2, HalfFloat.mult(w.get(base + stride2), x2));
+            sum3 = HalfFloat.add(sum3, HalfFloat.mult(w.get(base + stride3), x3));
+        }
+
+        // Cleanup loop
+        for (; j < n; j += stride) {
+            sum0 = HalfFloat.add(sum0, HalfFloat.mult(w.get(rowOffset + j), x.get(j)));
+        }
+
+        // Convert to float32 only at the end for reduction
+        localSum[localId] = sum0.getFloat32() + sum1.getFloat32() + sum2.getFloat32() + sum3.getFloat32();
+        context.localBarrier();
+
         for (int s = localSize >> 1; s > 0; s >>= 1) {
             if (localId < s) {
                 localSum[localId] += localSum[localId + s];
