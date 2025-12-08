@@ -27,7 +27,6 @@ public class LogitsQ8_0Layer extends AbstractLayer {
     public LogitsQ8_0Layer(String taskGraphName, State state, Weights weights, Configuration config, String lastTaskGraphID, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config);
         this.lastTaskGraphID = lastTaskGraphID;
-        state.tempLogits.init(0.0f);
         var tornadoWeights = requireWeightsType(weights, TornadoWeights.class, "LogitsQ8_0Layer", "TornadoTensor");
         this.logitsTaskGraph = setupLogitsTaskGraph(tornadoWeights, config);
         this.schedulerType = schedulerType;

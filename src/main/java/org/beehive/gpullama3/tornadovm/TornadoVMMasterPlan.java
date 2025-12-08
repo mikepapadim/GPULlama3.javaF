@@ -141,7 +141,8 @@ public class TornadoVMMasterPlan {
                     .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
                     .execute();
         }
-
+        state.tempLogits.clear(); // Clear the intermediate logits tensor -> set to 0f
+        state.wrapLogits.clear(); // Clear the output logits tensor -> set to 0f
         // 3. Execute the final graph that projects the last hidden state to output logits
         executionPlan.withGraph(getFinalLogitsGraphIndex())
                 .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
@@ -179,7 +180,7 @@ public class TornadoVMMasterPlan {
     /// Execute the forward pass of the LLaMA transformer model using TornadoVM acceleration just once to copy the data into the read-only data layer.
     public void forceCopyInReadOnlyDataLayered() {
         // Execute all TornadoVM graphs
-        state.wrapX.init(0.0f);
+        state.wrapX.clear();
         state.positionHolder.init(0);
 
         // Execute activation update graph
