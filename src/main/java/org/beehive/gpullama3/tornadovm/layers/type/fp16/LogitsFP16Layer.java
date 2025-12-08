@@ -28,9 +28,9 @@ public class LogitsFP16Layer extends AbstractLayer {
     public LogitsFP16Layer(String name, State state, Weights weights, Configuration config, String lastTaskGraphID, SchedulerType schedulerType) {
         super(name, state, weights, config);
         this.lastTaskGraphID = lastTaskGraphID;
+        this.schedulerType = schedulerType;
         var tornadoWeights = requireWeightsType(weights, TornadoWeights.class, "LogitsFP16Layer", "TornadoTensor");
         this.logitsTaskGraph = setupLogitsTaskGraph(tornadoWeights, config);
-        this.schedulerType = schedulerType;
     }
 
     // @formatter:off

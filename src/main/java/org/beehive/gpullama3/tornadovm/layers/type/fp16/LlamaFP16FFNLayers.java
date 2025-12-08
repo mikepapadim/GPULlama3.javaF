@@ -293,7 +293,10 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         if (layerIndex == 0) {
             // First layer: Transfer initial data to device (one-time transfer)
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.positionHolder);
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
+                    state.positionHolder,
+                    state.temp, state.tempFFN
+            );
             unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                     // Kernel context
                     context,
@@ -304,9 +307,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                     // KV cache
                     state.wrapKeyCache, state.wrapValueCache,
                     // Attention & FFN buffers
-                    state.wrapAtt, state.wrapHb, state.wrapXbFP16,
-                    // Reduction temporaries
-                    state.temp, state.tempFFN);
+                    state.wrapAtt, state.wrapHb, state.wrapXbFP16);
         } else {
             // Subsequent layers: Consume data already on device from previous layer
             unifiedLayer.consumeFromDevice(
@@ -321,9 +322,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                     // Attention & FFN buffers
                     state.wrapAtt, state.wrapHb,
                     // Position & misc
-                    state.positionHolder, state.wrapXbFP16,
-                    // Reduction temporaries
-                    state.temp, state.tempFFN);
+                    state.positionHolder, state.wrapXbFP16);
         }
         return unifiedLayer;
     }

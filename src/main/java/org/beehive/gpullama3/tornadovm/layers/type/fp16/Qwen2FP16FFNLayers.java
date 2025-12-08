@@ -398,7 +398,6 @@ public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
 
         return unifiedLayer;
     }
-    // @formatter:on
 
     /**
      * Configure data transfers for first and subsequent layers
@@ -407,12 +406,13 @@ public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
         // First layer: Transfer initial data to device (one-time transfer)
         if (layerIndex == 0) {
             // Transfer all attention-related data: query, key, value matrices and their caches
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, qwen2State.positionHolder); //
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, qwen2State.positionHolder,
+                    qwen2State.temp, qwen2State.tempFFN); //
             unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, //
                     context, qwen2State.wrapXb, qwen2State.wrapXb2, //
                     qwen2State.wrapQ, qwen2State.wrapK, qwen2State.wrapV, //
                     qwen2State.wrapKeyCache, qwen2State.wrapValueCache, //
-                    qwen2State.wrapAtt, qwen2State.wrapHb, qwen2State.temp, qwen2State.tempFFN); //
+                    qwen2State.wrapAtt, qwen2State.wrapHb); //
         } else {
             // Subsequent layers: Consume data already on device from previous layer
             unifiedLayer.consumeFromDevice( //
@@ -420,10 +420,11 @@ public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
                     qwen2State.wrapQ, qwen2State.wrapK, qwen2State.wrapV, //
                     qwen2State.wrapKeyCache, qwen2State.wrapValueCache, //
                     qwen2State.wrapAtt, qwen2State.wrapHb, //
-                    qwen2State.positionHolder, qwen2State.temp, qwen2State.tempFFN //
+                    qwen2State.positionHolder //
             );
         }
         return unifiedLayer;
     }
+    // @formatter:on
 
 }

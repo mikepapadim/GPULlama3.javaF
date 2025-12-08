@@ -1,9 +1,9 @@
 package org.beehive.gpullama3.tornadovm;
 
-import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.tornadovm.layerplanner.base.QuantizationPlannerFactory;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
@@ -133,6 +133,8 @@ public class TornadoVMMasterPlan {
 
         // Set the position in the state object (used by attention layers)
         state.positionHolder.set(0, position);
+        state.temp.clear();
+        state.tempFFN.clear();
 
         // 2. Execute each transformer layer graph sequentially
         // Each graph computes attention and feed-forward transformations for one layer

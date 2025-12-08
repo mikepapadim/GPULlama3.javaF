@@ -319,14 +319,21 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         if (layerIndex == 0) {
             // First layer: Transfer temporary buffers and state every execution
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, phi3State.positionHolder);
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, phi3State.positionHolder,
+                    phi3State.temp, phi3State.tempFFN);
             // First execution: allocate workspace buffers
-            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context, phi3State.wrapXb, phi3State.wrapXb2, phi3State.wrapQ, phi3State.wrapK, phi3State.wrapV, phi3State.wrapKeyCache,
-                    phi3State.wrapValueCache, phi3State.wrapAtt, phi3State.wrapHb, phi3State.temp, phi3State.tempFFN, phi3State.wrapHbG, phi3State.wrapHbU, phi3State.wrapQkv);
+            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
+                    context, phi3State.wrapXb, phi3State.wrapXb2,
+                    phi3State.wrapQ, phi3State.wrapK, phi3State.wrapV,
+                    phi3State.wrapKeyCache, phi3State.wrapValueCache,
+                    phi3State.wrapAtt, phi3State.wrapHb,  phi3State.wrapHbG,
+                    phi3State.wrapHbU, phi3State.wrapQkv);
         } else {
             // Subsequent layers: Consume data from previous layer
-            unifiedLayer.consumeFromDevice(context, phi3State.wrapXb, phi3State.wrapXb2, phi3State.wrapQ, phi3State.wrapK, phi3State.wrapV, phi3State.wrapKeyCache, phi3State.wrapValueCache,
-                    phi3State.wrapAtt, phi3State.wrapHb, phi3State.positionHolder, phi3State.temp, phi3State.tempFFN, phi3State.wrapHbG, phi3State.wrapHbU, phi3State.wrapQkv);
+            unifiedLayer.consumeFromDevice(context, phi3State.wrapXb, phi3State.wrapXb2,
+                    phi3State.wrapQ, phi3State.wrapK, phi3State.wrapV, phi3State.wrapKeyCache,
+                    phi3State.wrapValueCache, phi3State.wrapAtt, phi3State.wrapHb, phi3State.positionHolder,
+                    phi3State.wrapHbG, phi3State.wrapHbU, phi3State.wrapQkv);
         }
         return unifiedLayer;
     }
