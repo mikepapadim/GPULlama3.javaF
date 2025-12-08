@@ -80,6 +80,11 @@ public class Phi3State extends State {
         fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(contextLength, kvDim)).limit(nLayers).toArray(FloatTensor[]::new);
 
         // TornadoVM wrapper arrays for GPU acceleration
+        switch (config.quantization()) {
+            case "FP16" -> fields.createActivationFP16(config.dim());
+            case "Q8_0" -> fields.createActivationQ8_0(config.dim());
+            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
+        }
         fields.wrapX = new FloatArray(dim);
         fields.wrapXb = new FloatArray(dim);
         fields.wrapXFP16 = new HalfFloatArray(dim);
