@@ -102,7 +102,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Kcur", kCurWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Kcur", kCurWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", matmul1Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
@@ -240,11 +240,21 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                 layerIndex,                   // layer index for cache offset
                 qwen3Config.contextLength()); // max sequence length
 
-        // Parallel attention (with GQA support)
-        unifiedLayer.task("parallel-attention",
-                TransformerComputeKernelsLayered::processHeadsFlashAttentionOpt,
-                context, qwen3State.wrapQ, qwen3State.wrapKeyCache, qwen3State.wrapValueCache, qwen3State.wrapXb,
-                config.numberOfHeads(), nEmbdHead, nEmbdGqa, gqa, qwen3State.positionHolder, layerIndex, config.contextLength());
+        // Flash Attention
+        unifiedLayer.task("attention",
+                TransformerComputeKernelsLayered::processHeadsFlashAttention,
+                context,
+                qwen3State.wrapQ,             // query vectors
+                qwen3State.wrapKeyCache,      // key cache
+                qwen3State.wrapValueCache,    // value cache
+                qwen3State.wrapXb,            // output: attention result
+                qwen3Config.numberOfHeads(),  // nHeads
+                nEmbdHead,                    // headSize
+                nEmbdGqa,                     // kvDim
+                gqa,                          // kvMul (nHeads / nHeadKv)
+                qwen3State.positionHolder,    // position
+                layerIndex,                   // layer index
+                qwen3Config.contextLength()); // context length
 
         // Output projection (Q8_0 weights)
         unifiedLayer.task("matmul1",
