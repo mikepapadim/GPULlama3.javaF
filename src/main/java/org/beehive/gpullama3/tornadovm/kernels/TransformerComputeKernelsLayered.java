@@ -18,11 +18,7 @@ public class TransformerComputeKernelsLayered {
     public TransformerComputeKernelsLayered() {
     }
 
-    public static void fusedQKvBiasAddition(
-            KernelContext context,
-            FloatArray q_out, FloatArray k_out, FloatArray qBias,
-            FloatArray v_out, FloatArray kBias, FloatArray vBias,
-            int dimQ, int dimKV) {
+    public static void fusedQKvBiasAddition(KernelContext context, FloatArray q_out, FloatArray k_out, FloatArray qBias, FloatArray v_out, FloatArray kBias, FloatArray vBias, int dimQ, int dimKV) {
 
         int gid = context.globalIdx;
 
@@ -38,16 +34,11 @@ public class TransformerComputeKernelsLayered {
         }
     }
 
-
-    public static void fusedRmsNormFFNGateUp(
-            KernelContext context,
-            FloatArray x,               // raw input (FP32)
+    public static void fusedRmsNormFFNGateUp(KernelContext context, FloatArray x,               // raw input (FP32)
             FloatArray hb,              // output
             FloatArray rmsWeights,      // RMS norm weights
             FloatArray rmsScale,        // temp[0] = scale factor
-            HalfFloatArray w1,
-            HalfFloatArray w3,
-            int dim,                    // input dimension
+            HalfFloatArray w1, HalfFloatArray w3, int dim,                    // input dimension
             int hiddenDim,              // output dimension
             int localWorkGroupSize) {
 
@@ -232,25 +223,16 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
-     * Fused RoPE rotation with KV cache copy.
-     * Eliminates separate copyToCaches kernel.
+     * Fused RoPE rotation with KV cache copy. Eliminates separate copyToCaches kernel.
      *
-     * - Rotates Q (full dim)
-     * - Rotates K and writes directly to keyCache
-     * - Copies V directly to valueCache (no rotation needed)
+     * - Rotates Q (full dim) - Rotates K and writes directly to keyCache - Copies V directly to valueCache (no rotation needed)
      */
-    public static void ropeRotationWithCacheCopy(
-            KernelContext context,
-            IntArray positionHolder,
-            FloatArray sq,              // Q vector (in/out)
+    public static void ropeRotationWithCacheCopy(KernelContext context, IntArray positionHolder, FloatArray sq,              // Q vector (in/out)
             FloatArray sk,              // K vector (in/out)
             FloatArray sv,              // V vector (in only)
             FloatArray keyCache,        // Key cache (out)
             FloatArray valueCache,      // Value cache (out)
-            int kvDim,
-            int headSize,
-            int layer,
-            int contextLength) {
+            int kvDim, int headSize, int layer, int contextLength) {
 
         int i = context.globalIdx * 2;
         int pos = positionHolder.get(0);
@@ -613,19 +595,9 @@ public class TransformerComputeKernelsLayered {
         }
     }
 
-    public static void processHeadsFlashAttentionOptV2(
-            KernelContext context,
-            FloatArray q,
-            FloatArray key_cache,
-            FloatArray value_cache,
-            FloatArray xb,
-            int nHeads,
-            int headSize, // NOTE: Still used for logic, but not for allocation size
-            int kvDim,
-            int kvMul,
-            IntArray positionHolder,
-            int layer,
-            int contextLength) {
+    public static void processHeadsFlashAttentionOptV2(KernelContext context, FloatArray q, FloatArray key_cache, FloatArray value_cache, FloatArray xb, int nHeads, int headSize,
+            // NOTE: Still used for logic, but not for allocation size
+            int kvDim, int kvMul, IntArray positionHolder, int layer, int contextLength) {
 
         // --- STATIC CONSTANTS FOR OPENCL ALLOCATIONS ---
         // These must be large enough to handle the maximum expected values for
@@ -807,6 +779,7 @@ public class TransformerComputeKernelsLayered {
             xb.set(baseOffset + i, output[i] * normFactor);
         }
     }
+
     /**
      * Same as processHeadsFlashAttention but with some optimizations that seem to lower attention's execution time, especially in larger models.
      */
@@ -1252,8 +1225,8 @@ public class TransformerComputeKernelsLayered {
      *         Work group size
      */
 
-
-    public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, HalfFloatArray x, HalfFloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d, int localWorkGroupSize) {
+    public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, HalfFloatArray x, HalfFloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d,
+            int localWorkGroupSize) {
         // One row per workgroup (not per thread)
         int rowId = context.groupIdx;
         int localId = context.localIdx;
@@ -1272,7 +1245,6 @@ public class TransformerComputeKernelsLayered {
             hb.set(rowId, new HalfFloat(result));
         }
     }
-
 
     public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, FloatArray x, FloatArray hb, HalfFloatArray w1, HalfFloatArray w3, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
@@ -1437,7 +1409,6 @@ public class TransformerComputeKernelsLayered {
             //            partialSum = HalfFloat.add(partialSum, mul);
         }
 
-
         // Store partial sum in local memory
         localSum[localId] = new HalfFloat(partialSum);
         context.localBarrier();
@@ -1446,7 +1417,7 @@ public class TransformerComputeKernelsLayered {
         for (int stride = localSize / 2; stride > 0; stride >>= 1) {
             if (localId < stride) {
                 localSum[localId] = HalfFloat.add(localSum[localId], localSum[localId + stride]);
-//                localSum[localId] += localSum[localId + stride];
+                //                localSum[localId] += localSum[localId + stride];
             }
             context.localBarrier();
         }
@@ -1465,14 +1436,13 @@ public class TransformerComputeKernelsLayered {
 
         // Each thread calculates partial dot product
         float partialSum = 0.0f;
-//        HalfFloat partialSum = new HalfFloat(0f);
+        //        HalfFloat partialSum = new HalfFloat(0f);
         for (int j = localId; j < n; j += localSize) {
             int matrixIdx = rowOffset + j;
-//            HalfFloat mul = HalfFloat.mult(w.get(matrixIdx), x.get(j));
+            //            HalfFloat mul = HalfFloat.mult(w.get(matrixIdx), x.get(j));
             partialSum += w.get(matrixIdx).getFloat32() * x.get(j).getFloat32();
-//            partialSum = HalfFloat.add(partialSum, mul);
+            //            partialSum = HalfFloat.add(partialSum, mul);
         }
-
 
         // Store partial sum in local memory
         localSum[localId] = partialSum;
@@ -1489,8 +1459,7 @@ public class TransformerComputeKernelsLayered {
         return localSum[0];
     }
 
-    public static float matrixVectorRowMajorOptimizedXX(KernelContext context, int localSize,
-            HalfFloatArray x, HalfFloatArray w, int n) {
+    public static float matrixVectorRowMajorOptimizedXX(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
         int rowId = context.groupIdx;
         int localId = context.localIdx;
         float[] localSum = context.allocateFloatLocalArray(localSize);
@@ -1539,40 +1508,38 @@ public class TransformerComputeKernelsLayered {
         return localSum[0];
     }
 
-        public static float matrixVectorRowMajorOptimizedSingle(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
-            int rowId = context.groupIdx;
-            int localId = context.localIdx;
+    public static float matrixVectorRowMajorOptimizedSingle(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
 
-            // Allocate local memory for reduction
-            float[] localSum = context.allocateFloatLocalArray(localSize);
+        // Allocate local memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localSize);
 
-            int rowOffset = rowId * n;
+        int rowOffset = rowId * n;
 
-            HalfFloat partialSum = new HalfFloat(0f);
-            for (int j = localId; j < n; j += localSize) {
-                int matrixIdx = rowOffset + j;
-                HalfFloat mul = HalfFloat.mult(w.get(matrixIdx), x.get(j));
-                partialSum = HalfFloat.add(partialSum, mul);
-            }
-
-
-            // Store partial sum in local memory
-            localSum[localId] = partialSum.getHalfFloatValue();
-            context.localBarrier();
-
-            // Parallel reduction within workgroup
-            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
-                if (localId < stride) {
-                    localSum[localId] += localSum[localId + stride];
-                }
-                context.localBarrier();
-            }
-
-            return localSum[0];
+        HalfFloat partialSum = new HalfFloat(0f);
+        for (int j = localId; j < n; j += localSize) {
+            int matrixIdx = rowOffset + j;
+            HalfFloat mul = HalfFloat.mult(w.get(matrixIdx), x.get(j));
+            partialSum = HalfFloat.add(partialSum, mul);
         }
 
-    public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize,
-            HalfFloatArray x, HalfFloatArray w, int n) {
+        // Store partial sum in local memory
+        localSum[localId] = partialSum.getHalfFloatValue();
+        context.localBarrier();
+
+        // Parallel reduction within workgroup
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        return localSum[0];
+    }
+
+    public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
         int rowId = context.groupIdx;
         int localId = context.localIdx;
         float[] localSum = context.allocateFloatLocalArray(localSize);
@@ -1627,12 +1594,9 @@ public class TransformerComputeKernelsLayered {
         return localSum[0];
     }
 
-    public static void fusedQKVMatmul(
-            KernelContext context,
-            HalfFloatArray x,           // input (read once!)
+    public static void fusedQKVMatmul(KernelContext context, HalfFloatArray x,           // input (read once!)
             FloatArray q, FloatArray k, FloatArray v,  // outputs
-            HalfFloatArray wq, HalfFloatArray wk, HalfFloatArray wv,
-            int dim, int kvDim, int localWorkGroupSize) {
+            HalfFloatArray wq, HalfFloatArray wk, HalfFloatArray wv, int dim, int kvDim, int localWorkGroupSize) {
 
         int rowId = context.groupIdx;
         int localId = context.localIdx;
@@ -1643,76 +1607,81 @@ public class TransformerComputeKernelsLayered {
         if (rowId < dim) {
             // Q projection
             float sum = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, wq, dim);
-            if (localId == 0) q.set(rowId, sum);
+            if (localId == 0) {
+                q.set(rowId, sum);
+            }
         } else if (rowId < dim + kvDim) {
             // K projection
             int kRow = rowId - dim;
             float sum = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, wk, dim);
-            if (localId == 0) k.set(kRow, sum);
+            if (localId == 0) {
+                k.set(kRow, sum);
+            }
         } else {
             // V projection
             int vRow = rowId - dim - kvDim;
             float sum = matrixVectorRowMajorOptimized(context, localWorkGroupSize, x, wv, dim);
-            if (localId == 0) v.set(vRow, sum);
+            if (localId == 0) {
+                v.set(vRow, sum);
+            }
         }
     }
 
+    public static float matrixVectorRowMajorOptimizedx(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
 
-public static float matrixVectorRowMajorOptimizedx(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
-    int rowId = context.groupIdx;
-    int localId = context.localIdx;
+        // Allocate local memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localSize);
 
-    // Allocate local memory for reduction
-    float[] localSum = context.allocateFloatLocalArray(localSize);
+        int rowOffset = rowId * n;
 
-    int rowOffset = rowId * n;
+        // Each thread calculates partial dot product - UNROLLED BY 4
+        float sum0 = 0.0f;
+        float sum1 = 0.0f;
+        float sum2 = 0.0f;
+        float sum3 = 0.0f;
 
-    // Each thread calculates partial dot product - UNROLLED BY 4
-    float sum0 = 0.0f;
-    float sum1 = 0.0f;
-    float sum2 = 0.0f;
-    float sum3 = 0.0f;
+        int j = localId;
+        int stride = localSize;
+        int stride4 = localSize << 2;  // localSize * 4
+        int limit = n - (stride * 3);  // Safe limit for 4 elements
 
-    int j = localId;
-    int stride = localSize;
-    int stride4 = localSize << 2;  // localSize * 4
-    int limit = n - (stride * 3);  // Safe limit for 4 elements
+        // Main loop unrolled by 4 with separate accumulators
+        for (; j < limit; j += stride4) {
+            int base = rowOffset + j;
+            int j1 = j + stride;
+            int j2 = j + (stride << 1);
+            int j3 = j + stride * 3;
 
-    // Main loop unrolled by 4 with separate accumulators
-    for (; j < limit; j += stride4) {
-        int base = rowOffset + j;
-        int j1 = j + stride;
-        int j2 = j + (stride << 1);
-        int j3 = j + stride * 3;
-
-        sum0 += w.get(base).getFloat32() * x.get(j).getFloat32();
-        sum1 += w.get(base + stride).getFloat32() * x.get(j1).getFloat32();
-        sum2 += w.get(base + (stride << 1)).getFloat32() * x.get(j2).getFloat32();
-        sum3 += w.get(base + stride * 3).getFloat32() * x.get(j3).getFloat32();
-    }
-
-    // Handle remainder
-    for (; j < n; j += stride) {
-        sum0 += w.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
-    }
-
-    // Combine accumulators (tree reduction for better precision)
-    float partialSum = (sum0 + sum1) + (sum2 + sum3);
-
-    // Store partial sum in local memory
-    localSum[localId] = partialSum;
-    context.localBarrier();
-
-    // Parallel reduction within workgroup
-    for (int s = localSize >> 1; s > 0; s >>= 1) {
-        if (localId < s) {
-            localSum[localId] += localSum[localId + s];
+            sum0 += w.get(base).getFloat32() * x.get(j).getFloat32();
+            sum1 += w.get(base + stride).getFloat32() * x.get(j1).getFloat32();
+            sum2 += w.get(base + (stride << 1)).getFloat32() * x.get(j2).getFloat32();
+            sum3 += w.get(base + stride * 3).getFloat32() * x.get(j3).getFloat32();
         }
+
+        // Handle remainder
+        for (; j < n; j += stride) {
+            sum0 += w.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+        }
+
+        // Combine accumulators (tree reduction for better precision)
+        float partialSum = (sum0 + sum1) + (sum2 + sum3);
+
+        // Store partial sum in local memory
+        localSum[localId] = partialSum;
         context.localBarrier();
-    }
 
-    return localSum[0];
-}
+        // Parallel reduction within workgroup
+        for (int s = localSize >> 1; s > 0; s >>= 1) {
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
+            context.localBarrier();
+        }
+
+        return localSum[0];
+    }
 
     // Second kernel - Combines partial sums and computes final normalization
     public static void reductionFinalNormalization(KernelContext context, FloatArray output, int size, float ermsNorm) {
@@ -2007,10 +1976,7 @@ public static float matrixVectorRowMajorOptimizedx(KernelContext context, int lo
         }
     }
 
-    public static void fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte(KernelContext context, FloatArray x, FloatArray hb,
-                                                                        ByteArray w1,
-                                                                        ByteArray w3,
-                                                                        int n, int d, int localWorkGroupSize) {
+    public static void fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte(KernelContext context, FloatArray x, FloatArray hb, ByteArray w1, ByteArray w3, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
         int rowId = context.groupIdx;
         int localId = context.localIdx;
@@ -2075,4 +2041,364 @@ public static float matrixVectorRowMajorOptimizedx(KernelContext context, int lo
         }
     }
 
+    /**
+     * Fused Q/K/V matrix-vector multiplication for Q8_0 quantized weights. Reduces kernel launch overhead and improves input vector cache utilization.
+     *
+     * Workgroup assignment: - rowId [0, dim): Q projection - rowId [dim, dim+kvDim): K projection - rowId [dim+kvDim, dim+2*kvDim): V projection
+     */
+    public static void fusedQKVMatmulQ8(KernelContext context, FloatArray x, FloatArray q, FloatArray k, FloatArray v, ByteArray wq, ByteArray wk, ByteArray wv, int dim, int kvDim,
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34;
+        int blocksPerRow = (dim + blockSize - 1) / blockSize;
+
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowId < dim) {
+            // ========== Q projection ==========
+            int rowBlockOffset = rowId * blocksPerRow;
+
+            float partialSum1 = 0.0f;
+            float partialSum2 = 0.0f;
+            float partialSum3 = 0.0f;
+            float partialSum4 = 0.0f;
+
+            for (int j = localId * 4; j < dim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat scale = wq.getHalfFloat(blockByteOffset);
+                float scaleFloat = scale.getFloat32();
+
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+                byte quant1 = wq.get(quantsOffset);
+                byte quant2 = wq.get(quantsOffset + 1);
+                byte quant3 = wq.get(quantsOffset + 2);
+                byte quant4 = wq.get(quantsOffset + 3);
+
+                partialSum1 += ((float) quant1 * scaleFloat) * x.get(j);
+                partialSum2 += ((float) quant2 * scaleFloat) * x.get(j + 1);
+                partialSum3 += ((float) quant3 * scaleFloat) * x.get(j + 2);
+                partialSum4 += ((float) quant4 * scaleFloat) * x.get(j + 3);
+            }
+
+            float partialSum = partialSum1 + partialSum2 + partialSum3 + partialSum4;
+
+            for (int j = ((dim / 4) * 4) + localId; j < dim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat scale = wq.getHalfFloat(blockByteOffset);
+                float scaleFloat = scale.getFloat32();
+
+                byte quant = wq.get(blockByteOffset + 2 + withinBlockIdx);
+                partialSum += ((float) quant * scaleFloat) * x.get(j);
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                q.set(rowId, localSums[0]);
+            }
+
+        } else if (rowId < dim + kvDim) {
+            // ========== K projection ==========
+            int kRow = rowId - dim;
+            int rowBlockOffset = kRow * blocksPerRow;
+
+            float partialSum1 = 0.0f;
+            float partialSum2 = 0.0f;
+            float partialSum3 = 0.0f;
+            float partialSum4 = 0.0f;
+
+            for (int j = localId * 4; j < dim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat scale = wk.getHalfFloat(blockByteOffset);
+                float scaleFloat = scale.getFloat32();
+
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+                byte quant1 = wk.get(quantsOffset);
+                byte quant2 = wk.get(quantsOffset + 1);
+                byte quant3 = wk.get(quantsOffset + 2);
+                byte quant4 = wk.get(quantsOffset + 3);
+
+                partialSum1 += ((float) quant1 * scaleFloat) * x.get(j);
+                partialSum2 += ((float) quant2 * scaleFloat) * x.get(j + 1);
+                partialSum3 += ((float) quant3 * scaleFloat) * x.get(j + 2);
+                partialSum4 += ((float) quant4 * scaleFloat) * x.get(j + 3);
+            }
+
+            float partialSum = partialSum1 + partialSum2 + partialSum3 + partialSum4;
+
+            for (int j = ((dim / 4) * 4) + localId; j < dim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat scale = wk.getHalfFloat(blockByteOffset);
+                float scaleFloat = scale.getFloat32();
+
+                byte quant = wk.get(blockByteOffset + 2 + withinBlockIdx);
+                partialSum += ((float) quant * scaleFloat) * x.get(j);
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                k.set(kRow, localSums[0]);
+            }
+
+        } else if (rowId < dim + 2 * kvDim) {
+            // ========== V projection ==========
+            int vRow = rowId - dim - kvDim;
+            int rowBlockOffset = vRow * blocksPerRow;
+
+            float partialSum1 = 0.0f;
+            float partialSum2 = 0.0f;
+            float partialSum3 = 0.0f;
+            float partialSum4 = 0.0f;
+
+            for (int j = localId * 4; j < dim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat scale = wv.getHalfFloat(blockByteOffset);
+                float scaleFloat = scale.getFloat32();
+
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+                byte quant1 = wv.get(quantsOffset);
+                byte quant2 = wv.get(quantsOffset + 1);
+                byte quant3 = wv.get(quantsOffset + 2);
+                byte quant4 = wv.get(quantsOffset + 3);
+
+                partialSum1 += ((float) quant1 * scaleFloat) * x.get(j);
+                partialSum2 += ((float) quant2 * scaleFloat) * x.get(j + 1);
+                partialSum3 += ((float) quant3 * scaleFloat) * x.get(j + 2);
+                partialSum4 += ((float) quant4 * scaleFloat) * x.get(j + 3);
+            }
+
+            float partialSum = partialSum1 + partialSum2 + partialSum3 + partialSum4;
+
+            for (int j = ((dim / 4) * 4) + localId; j < dim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat scale = wv.getHalfFloat(blockByteOffset);
+                float scaleFloat = scale.getFloat32();
+
+                byte quant = wv.get(blockByteOffset + 2 + withinBlockIdx);
+                partialSum += ((float) quant * scaleFloat) * x.get(j);
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                v.set(vRow, localSums[0]);
+            }
+        }
+    }
+
+    /**
+     * Fully fused RMS normalization + FFN W1/W3 matmul with SiLU/GLU for Q8_0 weights.
+     * Each workgroup redundantly computes RMS scale to avoid cross-workgroup sync.
+     */
+    public static void fullyFusedRmsNormFFNGateUpQ8(
+            KernelContext context,
+            FloatArray x,               // raw input (FP32)
+            FloatArray hb,              // output
+            FloatArray rmsWeights,      // RMS norm weights
+            ByteArray w1,               // Q8_0 quantized
+            ByteArray w3,               // Q8_0 quantized
+            int dim,                    // input dimension
+            int hiddenDim,              // output dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        // ========== RMS Norm: Compute scale (each workgroup does this redundantly) ==========
+        float sumSquares = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            float val = x.get(j);
+            sumSquares += val * val;
+        }
+
+        localSum[localId] = sumSquares;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        float scale = 1.0f / TornadoMath.sqrt(localSum[0] / dim + 1e-5f);
+
+        // ========== W1 matmul with inline RMS normalization ==========
+        int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34;
+        int blocksPerRow = (dim + blockSize - 1) / blockSize;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float partialSum1_a = 0.0f;
+        float partialSum1_b = 0.0f;
+        float partialSum1_c = 0.0f;
+        float partialSum1_d = 0.0f;
+
+        for (int j = localId * 4; j < dim - 3; j += localWorkGroupSize * 4) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+            HalfFloat w1Scale = w1.getHalfFloat(blockByteOffset);
+            float w1ScaleFloat = w1Scale.getFloat32();
+
+            int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+            byte q1 = w1.get(quantsOffset);
+            byte q2 = w1.get(quantsOffset + 1);
+            byte q3 = w1.get(quantsOffset + 2);
+            byte q4 = w1.get(quantsOffset + 3);
+
+            float norm0 = rmsWeights.get(j) * scale * x.get(j);
+            float norm1 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+            float norm2 = rmsWeights.get(j + 2) * scale * x.get(j + 2);
+            float norm3 = rmsWeights.get(j + 3) * scale * x.get(j + 3);
+
+            partialSum1_a += ((float) q1 * w1ScaleFloat) * norm0;
+            partialSum1_b += ((float) q2 * w1ScaleFloat) * norm1;
+            partialSum1_c += ((float) q3 * w1ScaleFloat) * norm2;
+            partialSum1_d += ((float) q4 * w1ScaleFloat) * norm3;
+        }
+
+        float partialSum1 = partialSum1_a + partialSum1_b + partialSum1_c + partialSum1_d;
+
+        for (int j = ((dim / 4) * 4) + localId; j < dim; j += localWorkGroupSize) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+            HalfFloat w1Scale = w1.getHalfFloat(blockByteOffset);
+            float w1ScaleFloat = w1Scale.getFloat32();
+
+            byte quant = w1.get(blockByteOffset + 2 + withinBlockIdx);
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            partialSum1 += ((float) quant * w1ScaleFloat) * normalized;
+        }
+
+        localSum[localId] = partialSum1;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float result1 = localSum[0];
+
+        // ========== W3 matmul with inline RMS normalization ==========
+        float partialSum3_a = 0.0f;
+        float partialSum3_b = 0.0f;
+        float partialSum3_c = 0.0f;
+        float partialSum3_d = 0.0f;
+
+        for (int j = localId * 4; j < dim - 3; j += localWorkGroupSize * 4) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+            HalfFloat w3Scale = w3.getHalfFloat(blockByteOffset);
+            float w3ScaleFloat = w3Scale.getFloat32();
+
+            int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+            byte q1 = w3.get(quantsOffset);
+            byte q2 = w3.get(quantsOffset + 1);
+            byte q3 = w3.get(quantsOffset + 2);
+            byte q4 = w3.get(quantsOffset + 3);
+
+            float norm0 = rmsWeights.get(j) * scale * x.get(j);
+            float norm1 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+            float norm2 = rmsWeights.get(j + 2) * scale * x.get(j + 2);
+            float norm3 = rmsWeights.get(j + 3) * scale * x.get(j + 3);
+
+            partialSum3_a += ((float) q1 * w3ScaleFloat) * norm0;
+            partialSum3_b += ((float) q2 * w3ScaleFloat) * norm1;
+            partialSum3_c += ((float) q3 * w3ScaleFloat) * norm2;
+            partialSum3_d += ((float) q4 * w3ScaleFloat) * norm3;
+        }
+
+        float partialSum3 = partialSum3_a + partialSum3_b + partialSum3_c + partialSum3_d;
+
+        for (int j = ((dim / 4) * 4) + localId; j < dim; j += localWorkGroupSize) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+            HalfFloat w3Scale = w3.getHalfFloat(blockByteOffset);
+            float w3ScaleFloat = w3Scale.getFloat32();
+
+            byte quant = w3.get(blockByteOffset + 2 + withinBlockIdx);
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            partialSum3 += ((float) quant * w3ScaleFloat) * normalized;
+        }
+
+        localSum[localId] = partialSum3;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float result3 = localSum[0];
+
+        // ========== SiLU + GLU ==========
+        if (localId == 0) {
+            float silu = result1 / (1.0f + TornadoMath.exp(-result1));
+            hb.set(rowId, silu * result3);
+        }
+    }
 }
