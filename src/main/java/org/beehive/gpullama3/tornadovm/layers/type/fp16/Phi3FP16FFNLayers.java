@@ -207,7 +207,6 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
      *   • Inline SiLU+GLU: No intermediate wrapHb buffer needed
      *
      */
-    // @formatter:off
     TaskGraph setupSinglePhi3FFNLayer(Phi3TornadoWeights weights, int layerIndex) {
         var taskGraphName = "layer_" + layerIndex;
         var unifiedLayer = new TaskGraph(taskGraphName);
@@ -228,13 +227,15 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
-        unifiedLayer.task("attn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, phi3State.temp,               // output: scale factor
+        unifiedLayer.task("attn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                context, phi3State.temp,               // output: scale factor
                 phi3State.wrapX,              // input: hidden state
                 phi3Config.dim(),             // dimension
                 phi3Config.rmsNormEps(),      // epsilon
                 phi3State.localSize);         // local memory size
 
-        unifiedLayer.task("attn_rms_qkv_projection", Phi3Kernels::fusedRmsNormQKVMatmulDirect, context, phi3State.wrapX,              // input
+        unifiedLayer.task("attn_rms_qkv_projection", Phi3Kernels::fusedRmsNormQKVMatmulDirect,
+                context, phi3State.wrapX,              // input
                 phi3State.wrapQ,              // output Q
                 phi3State.wrapK,              // output K
                 phi3State.wrapV,              // output V
@@ -244,7 +245,8 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Fused Phi3 RoPE Rotation + KV Cache Write
-        unifiedLayer.task("rope_and_kv_cache", Phi3Kernels::ropeRotationWithCacheCopyPhi3, context, phi3State.positionHolder,     // current position
+        unifiedLayer.task("rope_and_kv_cache", Phi3Kernels::ropeRotationWithCacheCopyPhi3,
+                context, phi3State.positionHolder,     // current position
                 phi3State.wrapQ,              // Q vectors (in/out, rotated)
                 phi3State.wrapK,              // K vectors (in/out, rotated)
                 phi3State.wrapV,              // V vectors (in only)
@@ -257,7 +259,8 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 phi3Config.contextLength());  // max sequence length
 
         // Flash Attention
-        unifiedLayer.task("attention", TransformerComputeKernelsLayered::processHeadsFlashAttention, context, phi3State.wrapQ,              // query vectors
+        unifiedLayer.task("attention", TransformerComputeKernelsLayered::processHeadsFlashAttention,
+                context, phi3State.wrapQ,              // query vectors
                 phi3State.wrapKeyCache,       // key cache
                 phi3State.wrapValueCache,     // value cache
                 phi3State.wrapXb,             // output: attention result
@@ -270,7 +273,8 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 phi3Config.contextLength());  // context length
 
         // Output Projection with Residual
-        unifiedLayer.task("attn_output_proj", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, phi3State.wrapXb,             // input: attention output
+        unifiedLayer.task("attn_output_proj", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
+                context, phi3State.wrapXb,             // input: attention output
                 phi3State.wrapX,              // output: wrapX += Wo · wrapXb
                 weights.woLayered[layerIndex].asHalfFloatArray(),  // Wo [dim × dim]
                 phi3Config.dim(),             // input dim
@@ -282,7 +286,8 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
-        unifiedLayer.task("ffn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, phi3State.tempFFN,            // output: scale factor
+        unifiedLayer.task("ffn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                context, phi3State.tempFFN,            // output: scale factor
                 phi3State.wrapX,              // input: hidden state
                 phi3Config.dim(),             // dimension
                 phi3Config.rmsNormEps(),      // epsilon
@@ -290,12 +295,14 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
 
         // Final normalization (non-NVIDIA only)
         if (shouldUseFinalNormalization()) {
-            unifiedLayer.task("ffn_rms_finalize", TransformerComputeKernelsLayered::reductionFinalNormalization, context, phi3State.tempFFN,        // scale factor (in/out)
+            unifiedLayer.task("ffn_rms_finalize", TransformerComputeKernelsLayered::reductionFinalNormalization,
+                    context, phi3State.tempFFN,        // scale factor (in/out)
                     phi3Config.dim(),         // dimension
                     phi3Config.rmsNormEps()); // epsilon
         }
 
-        unifiedLayer.task("rms_ffn_silu", Phi3Kernels::fusedRmsNormFFNGateUpSiLU, context, phi3State.wrapX,              // input
+        unifiedLayer.task("rms_ffn_silu", Phi3Kernels::fusedRmsNormFFNGateUpSiLU,
+                context, phi3State.wrapX,              // input
                 phi3State.wrapHbU,            // output (direct to final FFN buffer)
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), phi3State.tempFFN,            // RMS scale
                 weights.wUpLayered[layerIndex].asHalfFloatArray(), phi3Config.dim(),             // input dim
@@ -303,13 +310,15 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Down Projection with Residual
-        unifiedLayer.task("ffn_down_proj", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, phi3State.wrapHbU,            // input: FFN intermediate
+        unifiedLayer.task("ffn_down_proj", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
+                context, phi3State.wrapHbU,            // input: FFN intermediate
                 phi3State.wrapX,              // output: wrapX += wDown · wrapHbU
                 weights.wDownLayered[layerIndex].asHalfFloatArray(),  // wDown [dim × hiddenDim]
                 phi3Config.hiddenDim(),       // input dim
                 phi3Config.dim(),             // output dim
-                LOCAL_WORK_GROUP_SIZE_ALLOC).persistOnDevice(phi3State.wrapX);
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
 
+        unifiedLayer.persistOnDevice(phi3State.wrapX);
         return unifiedLayer;
     }
 
