@@ -101,8 +101,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Qcur", qCurWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Kcur", kCurWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Kcur", kCurWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ropeRotation", ropeWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", matmul1Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
@@ -225,17 +224,21 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                         Qwen3Kernels::rmsnormMapIndexInPlaceWithParallelOffset,
                         context, qwen3State.wrapK, weights.rms_att_KNormLayered[layerIndex].asFloatArray(), nEmbdHead, qwen3State.tempKcur);
 
-        // RoPE rotation (Qwen3 variant)
-        unifiedLayer.task("ropeRotation",
-                Qwen3Kernels::ropeRotation,
-                context, qwen3State.positionHolder, qwen3State.wrapQ, qwen3State.wrapK,
-                config.numberOfKeyValueHeads(), nEmbdHead);
-
-        // Copy to KV cache
-        unifiedLayer.task("copyToCaches",
-                TransformerComputeKernelsLayered::copyToCache,
-                qwen3State.wrapKeyCache, qwen3State.wrapK, qwen3State.wrapValueCache, qwen3State.wrapV,
-                qwen3State.positionHolder, nEmbdGqa, layerIndex, config.contextLength());
+        // Fused RoPE Rotation + KV Cache Write
+        unifiedLayer.task("rope_and_kv_cache",
+                Qwen3Kernels::ropeRotationWithCacheCopy,
+                context,
+                qwen3State.positionHolder,    // current position
+                qwen3State.wrapQ,             // Q vectors (in/out, rotated)
+                qwen3State.wrapK,             // K vectors (in/out, rotated)
+                qwen3State.wrapV,             // V vectors (in only)
+                qwen3State.wrapKeyCache,      // key cache (out)
+                qwen3State.wrapValueCache,    // value cache (out)
+                qwen3Config.numberOfKeyValueHeads(),   // nHeadKv
+                nEmbdHead,                    // head dimension
+                nEmbdGqa,                     // kvDim
+                layerIndex,                   // layer index for cache offset
+                qwen3Config.contextLength()); // max sequence length
 
         // Parallel attention (with GQA support)
         unifiedLayer.task("parallel-attention",
