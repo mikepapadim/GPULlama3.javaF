@@ -73,8 +73,8 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         int matmulKVGlobal = nEmbdGqa * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid matmulKVRowMajorWorker = WorkerGridFactory.genericWorker(matmulKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        WorkerGrid qCurWorker = WorkerGridFactory.genericWorker(config.numberOfHeads() * nEmbdHead, nEmbdHead);
-        WorkerGrid kCurWorker = WorkerGridFactory.genericWorker(config.numberOfKeyValueHeads() * nEmbdHead, nEmbdHead);
+        int qkRmsNormGroups = config.numberOfHeads() + config.numberOfKeyValueHeads();
+        WorkerGrid qkRmsNormWorker = WorkerGridFactory.genericWorker(qkRmsNormGroups * nEmbdHead, nEmbdHead);
 
         int h = config.numberOfHeads();
         int ic = nEmbdHead / 2;
@@ -100,10 +100,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         for (int i = 0; i < config.numberOfLayers(); i++) {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Qcur", qCurWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Qcur", qCurWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Kcur", kCurWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Kcur", kCurWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", matmul1Worker);
@@ -220,22 +217,19 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                 kvDim,                        // K/V output dimension (GQA: reduced)
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        // Qcur: RMS norm with parallel offset for Query
-        Qwen3State qwen3State = (Qwen3State) state;
-        unifiedLayer.task("rmsnormReduction_Qcur",
-                Qwen3Kernels::rmsnormWithParallelOffset,
-                context, qwen3State.tempQcur, qwen3State.wrapQ, qwen3State.localSize, nEmbdHead, config.rmsNormEps())
-                .task("rmsnormMapIndexInPlace_Qcur",
-                        Qwen3Kernels::rmsnormMapIndexInPlaceWithParallelOffset,
-                        context, qwen3State.wrapQ, weights.rms_att_QNormLayered[layerIndex].asFloatArray(), nEmbdHead, qwen3State.tempQcur);
-
-        // Kcur: RMS norm with parallel offset for Key
-        unifiedLayer.task("rmsnormReduction_Kcur",
-                Qwen3Kernels::rmsnormWithParallelOffset,
-                context, qwen3State.tempKcur, qwen3State.wrapK, qwen3State.localSize, nEmbdHead, config.rmsNormEps())
-                .task("rmsnormMapIndexInPlace_Kcur",
-                        Qwen3Kernels::rmsnormMapIndexInPlaceWithParallelOffset,
-                        context, qwen3State.wrapK, weights.rms_att_KNormLayered[layerIndex].asFloatArray(), nEmbdHead, qwen3State.tempKcur);
+        // Fused Q/K RMSNorm (Qwen3-specific)
+        unifiedLayer.task("qk_rmsnorm",
+                Qwen3Kernels::fusedQKRmsNorm,
+                context,
+                qwen3State.wrapQ,             // Q vectors (in/out)
+                qwen3State.wrapK,             // K vectors (in/out)
+                weights.rms_att_QNormLayered[layerIndex].asFloatArray(),   // Q norm weights
+                weights.rms_att_KNormLayered[layerIndex].asFloatArray(),   // K norm weights
+                qwen3Config.numberOfHeads(),           // nHeads (Q heads)
+                qwen3Config.numberOfKeyValueHeads(),   // nHeadKv (K/V heads, GQA)
+                nEmbdHead,                    // head dimension
+                nEmbdHead,                    // local memory size
+                qwen3Config.rmsNormEps());    // epsilon
 
         // Fused RoPE Rotation + KV Cache Write
         unifiedLayer.task("rope_and_kv_cache",
