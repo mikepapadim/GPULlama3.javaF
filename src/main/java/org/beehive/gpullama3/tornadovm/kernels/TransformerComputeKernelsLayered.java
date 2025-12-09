@@ -101,6 +101,171 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * Fused RMSNorm apply + Gate/Up projection + SiLU + GLU for Q8_0 weights.
+     * Combines: reductionOneBlock2WithLayer + fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte
+     */
+    public static void fusedRmsNormFFNGateUpQ8_0(
+            KernelContext context,
+            FloatArray x,               // raw input (FP32)
+            FloatArray hb,              // output: SiLU(x·W1) ⊙ (x·W3)
+            FloatArray rmsWeights,      // RMS norm weights
+            FloatArray rmsScale,        // tempFFN[0] = scale factor
+            ByteArray w1,               // W1 (gate) Q8_0 weights
+            ByteArray w3,               // W3 (up) Q8_0 weights
+            int inputDim,               // input dimension
+            int hiddenDim,              // hidden dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float scale = rmsScale.get(0);
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
+
+        // Allocate local memory for reduction
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        // Calculate block offsets for W1 and W3 matrices
+        int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+        int w1RowBlockOffset = rowId * blocksPerRow;
+        int w3RowBlockOffset = rowId * blocksPerRow;
+
+        // ========== W1 computation with inline RMS normalization ==========
+        float partialSum1_1 = 0.0f, partialSum1_2 = 0.0f, partialSum1_3 = 0.0f, partialSum1_4 = 0.0f;
+
+        // Main loop with 4-way unrolling for W1
+        for (int j = localId * 4; j < inputDim - 3; j += localWorkGroupSize * 4) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+
+            // W1 block access
+            int w1BlockByteOffset = (w1RowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+            HalfFloat w1Scale = w1.getHalfFloat(w1BlockByteOffset);
+            float w1ScaleFloat = w1Scale.getFloat32();
+
+            int w1QuantsOffset = w1BlockByteOffset + 2 + withinBlockIdx;
+            byte w1Quant1 = w1.get(w1QuantsOffset);
+            byte w1Quant2 = w1.get(w1QuantsOffset + 1);
+            byte w1Quant3 = w1.get(w1QuantsOffset + 2);
+            byte w1Quant4 = w1.get(w1QuantsOffset + 3);
+
+            // Apply RMS normalization inline (equivalent to reductionOneBlock2WithLayer)
+            float norm1 = rmsWeights.get(j) * (scale * x.get(j));
+            float norm2 = rmsWeights.get(j + 1) * (scale * x.get(j + 1));
+            float norm3 = rmsWeights.get(j + 2) * (scale * x.get(j + 2));
+            float norm4 = rmsWeights.get(j + 3) * (scale * x.get(j + 3));
+
+            partialSum1_1 += ((float) w1Quant1 * w1ScaleFloat) * norm1;
+            partialSum1_2 += ((float) w1Quant2 * w1ScaleFloat) * norm2;
+            partialSum1_3 += ((float) w1Quant3 * w1ScaleFloat) * norm3;
+            partialSum1_4 += ((float) w1Quant4 * w1ScaleFloat) * norm4;
+        }
+
+        float partialSum1 = partialSum1_1 + partialSum1_2 + partialSum1_3 + partialSum1_4;
+
+        // Handle remaining elements for W1
+        for (int j = ((inputDim / 4) * 4) + localId; j < inputDim; j += localWorkGroupSize) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+
+            int w1BlockByteOffset = (w1RowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+            HalfFloat w1Scale = w1.getHalfFloat(w1BlockByteOffset);
+            float w1ScaleFloat = w1Scale.getFloat32();
+
+            byte w1Quant = w1.get(w1BlockByteOffset + 2 + withinBlockIdx);
+            float normalized = rmsWeights.get(j) * (scale * x.get(j));
+
+            partialSum1 += ((float) w1Quant * w1ScaleFloat) * normalized;
+        }
+
+        localSums[localId] = partialSum1;
+        context.localBarrier();
+
+        // Parallel reduction for W1
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        float sum1 = localSums[0];
+
+        // ========== W3 computation with inline RMS normalization ==========
+        float partialSum3_1 = 0.0f, partialSum3_2 = 0.0f, partialSum3_3 = 0.0f, partialSum3_4 = 0.0f;
+
+        // Main loop with 4-way unrolling for W3
+        for (int j = localId * 4; j < inputDim - 3; j += localWorkGroupSize * 4) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+
+            // W3 block access
+            int w3BlockByteOffset = (w3RowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+            HalfFloat w3Scale = w3.getHalfFloat(w3BlockByteOffset);
+            float w3ScaleFloat = w3Scale.getFloat32();
+
+            int w3QuantsOffset = w3BlockByteOffset + 2 + withinBlockIdx;
+            byte w3Quant1 = w3.get(w3QuantsOffset);
+            byte w3Quant2 = w3.get(w3QuantsOffset + 1);
+            byte w3Quant3 = w3.get(w3QuantsOffset + 2);
+            byte w3Quant4 = w3.get(w3QuantsOffset + 3);
+
+            // Apply RMS normalization inline (same computation as W1)
+            float norm1 = rmsWeights.get(j) * (scale * x.get(j));
+            float norm2 = rmsWeights.get(j + 1) * (scale * x.get(j + 1));
+            float norm3 = rmsWeights.get(j + 2) * (scale * x.get(j + 2));
+            float norm4 = rmsWeights.get(j + 3) * (scale * x.get(j + 3));
+
+            partialSum3_1 += ((float) w3Quant1 * w3ScaleFloat) * norm1;
+            partialSum3_2 += ((float) w3Quant2 * w3ScaleFloat) * norm2;
+            partialSum3_3 += ((float) w3Quant3 * w3ScaleFloat) * norm3;
+            partialSum3_4 += ((float) w3Quant4 * w3ScaleFloat) * norm4;
+        }
+
+        float partialSum3 = partialSum3_1 + partialSum3_2 + partialSum3_3 + partialSum3_4;
+
+        // Handle remaining elements for W3
+        for (int j = ((inputDim / 4) * 4) + localId; j < inputDim; j += localWorkGroupSize) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+
+            int w3BlockByteOffset = (w3RowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+            HalfFloat w3Scale = w3.getHalfFloat(w3BlockByteOffset);
+            float w3ScaleFloat = w3Scale.getFloat32();
+
+            byte w3Quant = w3.get(w3BlockByteOffset + 2 + withinBlockIdx);
+            float normalized = rmsWeights.get(j) * (scale * x.get(j));
+
+            partialSum3 += ((float) w3Quant * w3ScaleFloat) * normalized;
+        }
+
+        localSums[localId] = partialSum3;
+        context.localBarrier();
+
+        // Parallel reduction for W3
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        float sum3 = localSums[0];
+
+        // ========== SiLU + GLU (same as original) ==========
+        if (localId == 0) {
+            float silu = siluActivation(sum1);
+            float result = silu * sum3;
+            hb.set(rowId, result);
+        }
+    }
+
+    /**
      * Performs RMS (Root Mean Square) normalization using parallel reduction. This is the first phase of RMS normalization that computes the variance and scaling factor across all work groups.
      *
      * Algorithm: 1. Each thread computes square of its input element 2. Work group performs parallel reduction of squares 3. Partial sums stored per work group 4. First thread combines all partial
