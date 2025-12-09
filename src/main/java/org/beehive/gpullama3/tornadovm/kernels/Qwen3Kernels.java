@@ -3,6 +3,8 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
@@ -560,6 +562,234 @@ public class Qwen3Kernels {
 
             if (localId == 0) {
                 v.set(vRow, localSum[0]);
+            }
+        }
+    }
+
+    /**
+     * Fused RMSNorm apply + Q/K/V projection for Qwen3 GQA with Q8_0 quantized weights.
+     * Uses the same Q8_0 block structure as matrixVectorRowMajorOptimizedQ8_0Byte.
+     */
+    public static void fusedRmsNormQKVMatmulQ8_0(
+            KernelContext context,
+            FloatArray x,               // raw input (FP32)
+            FloatArray q,               // output Q
+            FloatArray k,               // output K
+            FloatArray v,               // output V
+            FloatArray rmsWeights,      // RMS norm weights
+            FloatArray rmsScale,        // temp[0] = scale factor
+            ByteArray wq,               // Q weight matrix (Q8_0)
+            ByteArray wk,               // K weight matrix (Q8_0)
+            ByteArray wv,               // V weight matrix (Q8_0)
+            int inputDim,               // input dimension (config.dim())
+            int qDim,                   // Q output dimension
+            int kvDim,                  // KV output dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        float scale = rmsScale.get(0);
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
+
+        // Allocate local memory for reduction
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowId < qDim) {
+            // ========== Q projection with inline normalization ==========
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOffset = rowId * blocksPerRow;
+
+            float partialSum = 0.0f;
+
+            // Main loop with 4-way unrolling
+            for (int j = localId * 4; j < inputDim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                // Load scale for this block
+                HalfFloat blockScale = wq.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                // Load 4 consecutive quantized values
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx; // Skip 2-byte scale
+                byte quant1 = wq.get(quantsOffset);
+                byte quant2 = wq.get(quantsOffset + 1);
+                byte quant3 = wq.get(quantsOffset + 2);
+                byte quant4 = wq.get(quantsOffset + 3);
+
+                // Apply RMS normalization inline and compute dot product
+                float norm1 = rmsWeights.get(j) * scale * x.get(j);
+                float norm2 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                float norm3 = rmsWeights.get(j + 2) * scale * x.get(j + 2);
+                float norm4 = rmsWeights.get(j + 3) * scale * x.get(j + 3);
+
+                partialSum += ((float) quant1 * scaleFloat) * norm1;
+                partialSum += ((float) quant2 * scaleFloat) * norm2;
+                partialSum += ((float) quant3 * scaleFloat) * norm3;
+                partialSum += ((float) quant4 * scaleFloat) * norm4;
+            }
+
+            // Handle remaining elements
+            for (int j = ((inputDim / 4) * 4) + localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wq.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                byte quant = wq.get(blockByteOffset + 2 + withinBlockIdx);
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+
+                partialSum += ((float) quant * scaleFloat) * normalized;
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            // Parallel reduction
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                q.set(rowId, localSums[0]);
+            }
+
+        } else if (rowId < qDim + kvDim) {
+            // ========== K projection with inline normalization ==========
+            int kRow = rowId - qDim;
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOffset = kRow * blocksPerRow;
+
+            float partialSum = 0.0f;
+
+            // Main loop with 4-way unrolling
+            for (int j = localId * 4; j < inputDim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wk.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+                byte quant1 = wk.get(quantsOffset);
+                byte quant2 = wk.get(quantsOffset + 1);
+                byte quant3 = wk.get(quantsOffset + 2);
+                byte quant4 = wk.get(quantsOffset + 3);
+
+                float norm1 = rmsWeights.get(j) * scale * x.get(j);
+                float norm2 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                float norm3 = rmsWeights.get(j + 2) * scale * x.get(j + 2);
+                float norm4 = rmsWeights.get(j + 3) * scale * x.get(j + 3);
+
+                partialSum += ((float) quant1 * scaleFloat) * norm1;
+                partialSum += ((float) quant2 * scaleFloat) * norm2;
+                partialSum += ((float) quant3 * scaleFloat) * norm3;
+                partialSum += ((float) quant4 * scaleFloat) * norm4;
+            }
+
+            for (int j = ((inputDim / 4) * 4) + localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wk.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                byte quant = wk.get(blockByteOffset + 2 + withinBlockIdx);
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+
+                partialSum += ((float) quant * scaleFloat) * normalized;
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                k.set(kRow, localSums[0]);
+            }
+
+        } else if (rowId < qDim + 2 * kvDim) {
+            // ========== V projection with inline normalization ==========
+            int vRow = rowId - qDim - kvDim;
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOffset = vRow * blocksPerRow;
+
+            float partialSum = 0.0f;
+
+            // Main loop with 4-way unrolling
+            for (int j = localId * 4; j < inputDim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wv.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+                byte quant1 = wv.get(quantsOffset);
+                byte quant2 = wv.get(quantsOffset + 1);
+                byte quant3 = wv.get(quantsOffset + 2);
+                byte quant4 = wv.get(quantsOffset + 3);
+
+                float norm1 = rmsWeights.get(j) * scale * x.get(j);
+                float norm2 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                float norm3 = rmsWeights.get(j + 2) * scale * x.get(j + 2);
+                float norm4 = rmsWeights.get(j + 3) * scale * x.get(j + 3);
+
+                partialSum += ((float) quant1 * scaleFloat) * norm1;
+                partialSum += ((float) quant2 * scaleFloat) * norm2;
+                partialSum += ((float) quant3 * scaleFloat) * norm3;
+                partialSum += ((float) quant4 * scaleFloat) * norm4;
+            }
+
+            for (int j = ((inputDim / 4) * 4) + localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wv.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                byte quant = wv.get(blockByteOffset + 2 + withinBlockIdx);
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+
+                partialSum += ((float) quant * scaleFloat) * normalized;
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                v.set(vRow, localSums[0]);
             }
         }
     }

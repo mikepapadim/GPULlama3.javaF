@@ -91,12 +91,15 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         int projectionTwoGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid projectionTwoWorker = WorkerGridFactory.genericWorker(projectionTwoGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
+        int qDim0 = nEmbdHeadK * qwen3Config.numberOfHeads();
+        int kvDim0 = nEmbdGqa;
+        int fusedQKVRows = qDim0 + 2 * kvDim0;  // Q rows + K rows + V rows
+        int fusedQKVGlobal = fusedQKVRows * LOCAL_WORK_GROUP_SIZE_ALLOC;
+        WorkerGrid fusedQKVWorker = WorkerGridFactory.genericWorker(fusedQKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
+
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qmatmul", matmulQRowMajorWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kmatmul", matmulKVRowMajorWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vmatmul", matmulKVRowMajorWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Qcur", qCurWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Qcur", qCurWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Kcur", kCurWorker);
@@ -155,9 +158,16 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
      * Setup a single transformer layer for Qwen3 with GQA (Q8_0 quantized)
      */
     TaskGraph setupSingleQwen3FFNLayer(Qwen3TornadoWeights weights, int layerIndex) {
+        var taskGraphName = "layer_" + layerIndex;
 
-        var unifiedLayerName = "layer_" + layerIndex;
-        TaskGraph unifiedLayer = new TaskGraph(unifiedLayerName);
+        // === Dimension Parameters ===
+        int qDim = nEmbdHeadK * qwen3Config.numberOfHeads();  // Q output size (full heads)
+        int kvDim = nEmbdGqa;                                  // K/V output size (reduced for GQA)
+        int inputDim = qwen3Config.dim();                      // Model dimension
+
+        var unifiedLayer = new TaskGraph(taskGraphName);
+
+        // === Data Setup ===
         unifiedLayer.consumeFromDevice(qwen3State.wrapX);
         // Transfer Q8_0 weights for this layer (quants and scales)
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
@@ -177,13 +187,15 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
 
-        // RMS norm for attention input
-        unifiedLayer.task("reductionsOneBlock",
+        // RMS Normalization - compute scale factor
+        unifiedLayer.task("attn_rms_reduce",
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                context, qwen3State.temp, qwen3State.wrapX, config.dim(), config.rmsNormEps(), qwen3State.localSize)
-                .task("mapContext",
-                        TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
-                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp);
+                context,
+                qwen3State.temp,              // output: scale factor
+                qwen3State.wrapX,             // input: hidden state
+                config.dim(),            // dimension
+                config.rmsNormEps(),     // epsilon
+                qwen3State.localSize);        // local memory size
 
         // QKV projections with Qwen3 GQA dimensions
         // Q8_0 weights pass both quants and scales
@@ -191,21 +203,22 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         int kvDim0 = nEmbdGqa;                             // KV dimension (smaller due to GQA)
         int qkvDim1 = config.dim();                        // Input dimension
 
-        unifiedLayer.task("qmatmul",
-                TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                context, qwen3State.wrapXb, qwen3State.wrapQ,
-                weights.wqLayered[layerIndex].asByteArray(),
-                qkvDim1, qDim0, LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("kmatmul",
-                        TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                        context, qwen3State.wrapXb, qwen3State.wrapK,
-                        weights.wkLayered[layerIndex].asByteArray(),
-                        qkvDim1, kvDim0, LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("vmatmul",
-                        TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                        context, qwen3State.wrapXb, qwen3State.wrapV,
-                        weights.wvLayered[layerIndex].asByteArray(),
-                        qkvDim1, kvDim0, LOCAL_WORK_GROUP_SIZE_ALLOC);
+        unifiedLayer.task("attn_rms_qkv_projection",
+                Qwen3Kernels::fusedRmsNormQKVMatmulQ8_0,
+                context,
+                qwen3State.wrapX,             // input: raw hidden state (FP32)
+                qwen3State.wrapQ,             // output: Q vectors
+                qwen3State.wrapK,             // output: K vectors
+                qwen3State.wrapV,             // output: V vectors
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(),  // RMS weights
+                qwen3State.temp,              // RMS scale factor from reduction
+                weights.wqLayered[layerIndex].asByteArray(),               // Wq (Q8_0)
+                weights.wkLayered[layerIndex].asByteArray(),               // Wk (Q8_0)
+                weights.wvLayered[layerIndex].asByteArray(),               // Wv (Q8_0)
+                inputDim,                     // input dimension
+                qDim,                         // Q output dimension
+                kvDim,                        // K/V output dimension (GQA: reduced)
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Qcur: RMS norm with parallel offset for Query
         Qwen3State qwen3State = (Qwen3State) state;
