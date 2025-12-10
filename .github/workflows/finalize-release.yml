@@ -24,7 +24,7 @@ jobs:
 
     outputs:
       version: ${{ steps.get_version.outputs.version }}
-    
+
     steps:
       - name: Get version
         id: get_version
@@ -39,7 +39,7 @@ jobs:
       - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: main
           fetch-depth: 0
 
       - name: Configure Git
@@ -59,6 +59,7 @@ jobs:
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
           CHANGELOG_FILE="CHANGELOG.md"
+          RELEASE_NOTES="${{ runner.temp }}/release_notes.txt"
           
           if [ -f "$CHANGELOG_FILE" ]; then
             # Extract section for this version
@@ -66,15 +67,15 @@ jobs:
               $0 ~ ver { found=1; next }
               found && /^## \[/ { exit }
               found { print }
-            ' "$CHANGELOG_FILE" > /tmp/release_notes.txt
-            
-            if [ -s /tmp/release_notes.txt ]; then
+            ' "$CHANGELOG_FILE" > "$RELEASE_NOTES"
+          
+            if [ -s "$RELEASE_NOTES" ]; then
               echo "Found changelog section for ${VERSION}"
             else
-              echo "See CHANGELOG.md for details." > /tmp/release_notes.txt
+              echo "See CHANGELOG.md for details." > "$RELEASE_NOTES"
             fi
           else
-            echo "See commit history for changes." > /tmp/release_notes.txt
+            echo "See commit history for changes." > "$RELEASE_NOTES"
           fi
 
       - name: Create GitHub Release
@@ -86,7 +87,7 @@ jobs:
             
             let releaseNotes;
             try {
-              releaseNotes = fs.readFileSync('/tmp/release_notes.txt', 'utf8').trim();
+              releaseNotes = fs.readFileSync('${{ runner.temp }}/release_notes.txt', 'utf8').trim();
               if (!releaseNotes) {
                 releaseNotes = `Release ${version}`;
               }
@@ -131,7 +132,7 @@ jobs:
     permissions:
       contents: write
     if: github.event_name == 'pull_request'
-    
+
     steps:
       - name: Delete release branch
         uses: actions/github-script@v7
