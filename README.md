@@ -121,6 +121,7 @@ wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm
 unzip tornadovm-2.1.0-opencl-linux-amd64.zip
 # Replace <path-to-sdk> manually with the absolute path of the extracted folder
 export TORNADO_SDK="<path-to-sdk>/tornadovm-2.1.0-opencl"
+export PATH=$TORNADO_SDK/bin:$PATH
 
 tornado --devices
 tornado --version
@@ -133,6 +134,7 @@ wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm
 unzip tornadovm-2.1.0-opencl-mac-aarch64.zip
 # Replace <path-to-sdk> manually with the absolute path of the extracted folder
 export TORNADO_SDK="<path-to-sdk>/tornadovm-2.1.0-opencl"
+export PATH=$TORNADO_SDK/bin:$PATH
 
 tornado --devices
 tornado --version
