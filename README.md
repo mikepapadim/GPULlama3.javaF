@@ -98,7 +98,6 @@ Ensure you have the following installed and configured:
 
 - **Java 21**: Required for Vector API support & TornadoVM.
 - [TornadoVM](https://github.com/beehive-lab/TornadoVM) with OpenCL or PTX backends.
-- [Maven](https://maven.apache.org/): For building the Java project.
 
 ### Install, Build, and Run
 
@@ -239,83 +238,25 @@ llama-tornado --gpu --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "te
 The above model can we swapped with one of the other models, such as `beehive-llama-3.2-3b-instruct-fp16.gguf` or `beehive-llama-3.2-8b-instruct-fp16.gguf`, depending on your needs.
 Check models below.
 
-## Download Model Files
+## Collection of Tested Models
 
-Download `FP16` quantized `Llama-3` .gguf files from:
-- https://huggingface.co/beehive-lab/Llama-3.2-1B-Instruct-GGUF-FP16
-- https://huggingface.co/beehive-lab/Llama-3.2-3B-Instruct-GGUF-FP16
-- https://huggingface.co/beehive-lab/Llama-3.2-8B-Instruct-GGUF-FP16
+### Llama3.2 Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/llama3-gpullama3java)
 
-Download `FP16` quantized `Mistral` .gguf files from:
-- https://huggingface.co/collections/beehive-lab/mistral-gpullama3java-684afabb206136d2e9cd47e0
+### Qwen 2.5 Collection 
+[https://huggingface.co/collections/beehive-lab/qwen-25-gpullama3java](https://huggingface.co/collections/beehive-lab/qwen-25-gpullama3java)
 
-Download `FP16` quantized `Qwen3` .gguf files from:
-- https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF
-- https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF
-- https://huggingface.co/ggml-org/Qwen3-4B-GGUF
-- https://huggingface.co/ggml-org/Qwen3-8B-GGUF
+### Qwen 3 Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/qwen-3-gpullama3java)
 
-Download `FP16` quantized `Qwen2.5` .gguf files from:
-- https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF
-- https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+### Phi-3 Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/phi-3-gpullama3java)
 
-Download `FP16` quantized `DeepSeek-R1-Distill-Qwen` .gguf files from:
-- https://huggingface.co/hdnh2006/DeepSeek-R1-Distill-Qwen-1.5B-GGUF
+### Mistral Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/mistral-gpullama3java)
 
-Please be gentle with [huggingface.co](https://huggingface.co) servers:
-
-**Note** FP16 models are first-class citizens for the current version.
-```
-# Llama 3.2 (1B) - FP16
-wget https://huggingface.co/beehive-lab/Llama-3.2-1B-Instruct-GGUF-FP16/resolve/main/beehive-llama-3.2-1b-instruct-fp16.gguf
-
-# Llama 3.2 (3B) - FP16 
-wget https://huggingface.co/beehive-lab/Llama-3.2-3B-Instruct-GGUF-FP16/resolve/main/beehive-llama-3.2-3b-instruct-fp16.gguf
-
-# Llama 3 (8B) - FP16 
-wget https://huggingface.co/beehive-lab/Llama-3.2-8B-Instruct-GGUF-FP16/resolve/main/beehive-llama-3.2-8b-instruct-fp16.gguf
-
-# Mistral (7B) - FP16
-wget https://huggingface.co/MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3.fp16.gguf
-
-# Qwen3 (0.6B) - FP16
-wget https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-f16.gguf
-
-# Qwen3 (1.7B) - FP16
-wget https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-1.7B-f16.gguf
-
-# Qwen3 (4B) - FP16
-wget https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-4B-f16.gguf
-
-# Qwen3 (8B) - FP16
-wget https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-8B-f16.gguf
-
-# Phi-3-mini-4k - FP16
-wget https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-fp16.gguf
-
-# Qwen2.5 (0.5B)
-wget https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-f16.gguf
-
-# Qwen2.5 (1.5B)
-wget https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-fp16.gguf
-
-# DeepSeek-R1-Distill-Qwen (1.5B)
-wget https://huggingface.co/hdnh2006/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-F16.gguf
-```
-
-**[Experimental]** you can download the Q8 and Q4 used in the original implementation of Llama3.java, but for now are going to be dequanted to FP16 for TornadoVM support:
-```
-# Llama 3.2 (1B) - Q4_0
-curl -L -O https://huggingface.co/mukel/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_0.gguf
-# Llama 3.2 (3B) - Q4_0 
-curl -L -O https://huggingface.co/mukel/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_0.gguf
-# Llama 3 (8B) - Q4_0 
-curl -L -O https://huggingface.co/mukel/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_0.gguf
-# Llama 3.2 (1B) - Q8_0 
-curl -L -O https://huggingface.co/mukel/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q8_0.gguf
-# Llama 3.1 (8B) - Q8_0 
-curl -L -O https://huggingface.co/mukel/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_0.gguf
-```
+### DeepSeek-R1-Distill-Qwen Collection 
+[https://huggingface.co/collections/beehive-lab/deepseek-r1-distill-qwen-gpullama3java](https://huggingface.co/collections/beehive-lab/deepseek-r1-distill-qwen-gpullama3java)
 
 -----------
 
