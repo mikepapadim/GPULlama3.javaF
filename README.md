@@ -241,16 +241,22 @@ Check models below.
 ## Collection of Tested Models
 
 ### Llama3.2 Collection 
-https://huggingface.co/collections/beehive-lab/llama3-gpullama3java
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/llama3-gpullama3java)
 
-### Llama3.2 Collection 
-https://huggingface.co/collections/beehive-lab/llama3-gpullama3java
+### Qwen 2.5 Collection 
+[https://huggingface.co/collections/beehive-lab/qwen-25-gpullama3java](https://huggingface.co/collections/beehive-lab/qwen-25-gpullama3java)
 
-### Llama3.2 Collection 
-https://huggingface.co/collections/beehive-lab/llama3-gpullama3java
+### Qwen 3 Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/qwen-3-gpullama3java)
 
-### Llama3.2 Collection 
-https://huggingface.co/collections/beehive-lab/llama3-gpullama3java
+### Phi-3 Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/phi-3-gpullama3java)
+
+### Mistral Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/mistral-gpullama3java)
+
+### DeepSeek-R1-Distill-Qwen Collection 
+[https://huggingface.co/collections/beehive-lab/deepseek-r1-distill-qwen-gpullama3java](https://huggingface.co/collections/beehive-lab/deepseek-r1-distill-qwen-gpullama3java)
 
 -----------
 
