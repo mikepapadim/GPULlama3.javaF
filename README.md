@@ -106,37 +106,47 @@ When cloning this repository, use the `--recursive` flag to ensure that TornadoV
 
 ```bash
 # Clone the repository with all submodules
-git clone --recursive https://github.com/beehive-lab/GPULlama3.java.git
+git clone https://github.com/beehive-lab/GPULlama3.java.git
+```
 
+#### Install the TornadoVM SDK on Linux or macOS
+
+Ensure that your JAVA_HOME points to a supported JDK before using the SDK. Download an SDK package matching your OS, architecture, and accelerator backend (opencl, ptx).
+All pre-built SDKs are available on the TornadoVM [Releases Page](https://github.com/beehive-lab/TornadoVM/releases).
+#After extracting the SDK, add its bin/ directory to your PATH so the `tornado` command becomes available.
+
+##### Linux (x86_64)
+
+```bash
+wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-linux-amd64.zip
+unzip tornadovm-2.1.0-opencl-linux-amd64.zip
+# Replace <path-to-sdk> manually with the absolute path of the extracted folder
+export TORNADO_SDK="<path-to-sdk>/tornadovm-2.1.0-opencl"
+
+tornado --devices
+tornado --version
+```
+
+##### macOS (Apple Silicon)
+
+```bash
+wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-mac-aarch64.zip
+unzip tornadovm-2.1.0-opencl-mac-aarch64.zip
+# Replace <path-to-sdk> manually with the absolute path of the extracted folder
+export TORNADO_SDK="<path-to-sdk>/tornadovm-2.1.0-opencl"
+
+tornado --devices
+tornado --version
+```
+
+#### Build the GPULlama3.java
+
+```bash
 # Navigate to the project directory
 cd GPULlama3.java
 
-# Update the submodules to match the exact commit point recorded in this repository
-git submodule update --recursive
-```
-
-#### On Linux or macOS
-```bash
-# Enter the TornadoVM submodule directory
-cd external/tornadovm
-
-# Optional: Create and activate a Python virtual environment if needed
-python3 -m venv venv
-source ./venv/bin/activate
-
-# Install TornadoVM with a supported JDK 21 and select the backends (--backend opencl,ptx).
-# To see the compatible JDKs run: ./bin/tornadovm-installer --listJDKs
-# For example, to install with OpenJDK 21 and build the OpenCL backend, run: 
-./bin/tornadovm-installer --jdk jdk21 --backend opencl
-
-# Source the TornadoVM environment variables
-source setvars.sh
-
-# Navigate back to the project root directory
-cd ../../
-
 # Source the project-specific environment paths -> this will ensure the correct paths are set for the project and the TornadoVM SDK
-# Expect to see: [INFO] Environment configured for Llama3 with TornadoVM at: /home/YOUR_PATH_TO_TORNADOVM
+# Expect to see: [INFO] Environment configured for Llama3 with TornadoVM at: $TORNADO_SDK
 source set_paths
 
 # Build the project using Maven (skip tests for faster build)
@@ -147,38 +157,6 @@ make
 ./llama-tornado --gpu  --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
 ```
 
-#### On Windows
-```bash
-# Enter the TornadoVM submodule directory
-cd external/tornadovm
-
-# Optional: Create and activate a Python virtual environment if needed
-python -m venv .venv
-.venv\Scripts\activate.bat
-.\bin\windowsMicrosoftStudioTools2022.cmd
-
-# Install TornadoVM with a supported JDK 21 and select the backends (--backend opencl,ptx).
-# To see the compatible JDKs run: ./bin/tornadovm-installer --listJDKs
-# For example, to install with OpenJDK 21 and build the OpenCL backend, run: 
-python bin\tornadovm-installer --jdk jdk21 --backend opencl
-
-# Source the TornadoVM environment variables
-setvars.cmd
-
-# Navigate back to the project root directory
-cd ../../
-
-# Source the project-specific environment paths -> this will ensure the correct paths are set for the project and the TornadoVM SDK
-# Expect to see: [INFO] Environment configured for Llama3 with TornadoVM at: C:\Users\YOUR_PATH_TO_TORNADOVM
-set_paths.cmd
-
-# Build the project using Maven (skip tests for faster build)
-# mvn clean package -DskipTests or just make
-make
-
-# Run the model (make sure you have downloaded the model file first -  see below)
-python llama-tornado --gpu  --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
-```
 -----------
 ## 📦 Maven Dependency
 
