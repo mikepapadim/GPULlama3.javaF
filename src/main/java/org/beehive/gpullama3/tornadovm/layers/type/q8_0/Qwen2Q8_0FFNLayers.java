@@ -66,6 +66,10 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         WorkerGrid configKvDimRowMajorGlobalWorker = new WorkerGrid1D(configKvDimRowMajorGlobal);
         configKvDimRowMajorGlobalWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC, 1, 1);
 
+        int fusedQKVGlobal = (config.dim() + 2 * config.kvDim()) * LOCAL_WORK_GROUP_SIZE_ALLOC;
+        WorkerGrid fusedQKVWorker = new WorkerGrid1D(fusedQKVGlobal);
+        fusedQKVWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC, 1, 1);
+
         // WorkerGrid for fused QKV bias addition (dimension is dimQ)
         WorkerGrid fusedQKVBiasWorker = new WorkerGrid1D(config.dim());
         fusedQKVBiasWorker.setGlobalWork(config.dim(), 1, 1);
@@ -98,18 +102,13 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
 
         // Map workers to tasks
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qmatmul", configDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kmatmul", configKvDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vmatmul", configKvDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qbias", qBiasWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kbias", kvBiasWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vbias", kvBiasWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_qkv_bias", fusedQKVBiasWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", configHiddenDimRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
@@ -178,15 +177,24 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
         unifiedLayer.task("reductionsOneBlock" , TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp,
-                        state.wrapX, config.dim(), config.rmsNormEps(), state.localSize)
-                .task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb,
-                        state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
-                .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte, context,
-                        state.wrapXb,  state.wrapQ, weights.wqLayered[layerIndex].asByteArray(), config.dim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte, context,
-                        state.wrapXb,  state.wrapK, weights.wkLayered[layerIndex].asByteArray(), config.dim(), config.kvDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("vmatmul", TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte, context,
-                        state.wrapXb,   state.wrapV, weights.wvLayered[layerIndex].asByteArray(), config.dim(), config.kvDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC);
+                        state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
+
+        unifiedLayer.task("attn_rms_qkv_projection",
+                Qwen3Kernels::fusedRmsNormQKVMatmulQ8_0,
+                context,
+                qwen2State.wrapX,       // input: raw hidden state (FP32)
+                qwen2State.wrapQ,       // output: Q vectors
+                qwen2State.wrapK,       // output: K vectors
+                qwen2State.wrapV,       // output: V vectors
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(),   // RMS weights
+                qwen2State.temp,        // RMS scale factor from reduction
+                weights.wqLayered[layerIndex].asByteArray(),    // Wq (Q8_0)
+                weights.wkLayered[layerIndex].asByteArray(),    // Wk (Q8_0)
+                weights.wvLayered[layerIndex].asByteArray(),    // Wv (Q8_0)
+                config.dim(),           // input dimension
+                config.dim(),           // Q output dimension
+                config.kvDim(),         // K/V output dimension (GQA: reduced)
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Fused Q/K/V Bias Addition (3→1 kernel fusion)
         unifiedLayer.task("fused_qkv_bias",
