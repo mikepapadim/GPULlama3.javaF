@@ -51,42 +51,6 @@ GPULlama3ChatModel model = GPULlama3ChatModel.builder()
 #### **[Interactive-mode]** Running on a RTX 5090 with nvtop on bottom to track GPU utilization and memory usage.
 
 ![Demo](docs/inter-output.gif)
------------
-#### **[Instruct-mode]**  Running on a RTX 5090 
-
-![Demo](docs/intruct-output.gif)
-----------
-
-### TornadoVM-Accelerated Inference Performance and Optimization Status
-
-We are at the early stages of Java entering the AI world with features added to the JVM that enable faster execution such as GPU acceleration, Vector acceleration, high-performance access to off-heap memory and others.
-<br><br>This repository provides the first Java-native implementation of Llama3 that automatically compiles and executes Java code on GPUs via TornadoVM. 
-The baseline numbers presented below provide a solid starting point for achieving more competitive performance compared to llama.cpp or native CUDA implementations. 
-[Our roadmap](https://github.com/beehive-lab/GPULlama3.java/blob/main/docs/GPULlama3_ROADMAP.md) provides the upcoming set of features that will dramatically improve the numbers below with the clear target being to achieve performance parity with the fastest implementations. 
-<br><br>
-If you achieve additional performance data points (e.g. new hardware or platforms) please let us know to add them below. 
-<br><br>
-In addition, if you are interested to learn more about the challenges of managed programming languages and GPU acceleration, you can read [our book](https://link.springer.com/book/10.1007/978-3-031-49559-5) or consult the [TornadoVM educational pages](https://www.tornadovm.org/resources). 
-
-
-| Vendor / Backend             | Hardware     | Llama-3.2-1B-Instruct | Llama-3.2-3B-Instruct | Optimizations |
-|:----------------------------:|:------------:|:---------------------:|:---------------------:|:-------------:|
-|                              |              | **FP16**              |       **FP16**        |  **Support**  |
-| **NVIDIA / OpenCL-PTX**      | RTX 3070     | 52 tokens/s           |    22.96 tokens/s     |       ✅      |
-|                              | RTX 4090     | 66.07 tokens/s        |    35.51 tokens/s     |       ✅      |
-|                              | RTX 5090     | 96.65 tokens/s        |    47.68 tokens/s     |       ✅      |
-|                              | L4 Tensor    | 52.96 tokens/s        |    22.68 tokens/s     |       ✅      |
-| **Intel / OpenCL**           | Arc A770     | 15.65 tokens/s        |     7.02 tokens/s     |      (WIP)    |
-| **Apple Silicon / OpenCL**   | M3 Pro       | 14.04 tokens/s        |     6.78 tokens/s     |      (WIP)    |
-|                              | M4 Pro       | 16.77 tokens/s        |     8.56 tokens/s     |      (WIP)    |
-| **AMD / OpenCL**             | Radeon RX    | (WIP)                 |         (WIP)         |      (WIP)    |
-
-##### ⚠️ Note on Apple Silicon Performance
-
-TornadoVM currently runs on Apple Silicon via [OpenCL](https://developer.apple.com/opencl/), which has been officially deprecated since macOS 10.14.
-
-Despite being deprecated, OpenCL can still run on Apple Silicon; albeit, with older drivers which do not support all optimizations of TornadoVM. Therefore, the performance is not optimal since TornadoVM does not have a Metal backend yet (it currently has OpenCL, PTX, and SPIR-V backends). We recommend using Apple silicon for development and for performance testing to use OpenCL/PTX compatible Nvidia GPUs for the time being (until we add a Metal backend to TornadoVM and start optimizing it).
-
 
 -----------
 
@@ -158,6 +122,39 @@ make
 # Run the model (make sure you have downloaded the model file first -  see below)
 ./llama-tornado --gpu  --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
 ```
+
+
+----------
+
+### TornadoVM-Accelerated Inference Performance and Optimization Status
+
+We are at the early stages of Java entering the AI world with features added to the JVM that enable faster execution such as GPU acceleration, Vector acceleration, high-performance access to off-heap memory and others.
+<br><br>This repository provides the first Java-native implementation of Llama3 that automatically compiles and executes Java code on GPUs via TornadoVM. 
+The baseline numbers presented below provide a solid starting point for achieving more competitive performance compared to llama.cpp or native CUDA implementations. 
+[Our roadmap](https://github.com/beehive-lab/GPULlama3.java/blob/main/docs/GPULlama3_ROADMAP.md) provides the upcoming set of features that will dramatically improve the numbers below with the clear target being to achieve performance parity with the fastest implementations. 
+<br><br>
+If you achieve additional performance data points (e.g. new hardware or platforms) please let us know to add them below. 
+<br><br>
+In addition, if you are interested to learn more about the challenges of managed programming languages and GPU acceleration, you can read [our book](https://link.springer.com/book/10.1007/978-3-031-49559-5) or consult the [TornadoVM educational pages](https://www.tornadovm.org/resources). 
+
+
+| Vendor / Backend             | Hardware     | Llama-3.2-1B-Instruct | Llama-3.2-3B-Instruct | Optimizations |
+|:----------------------------:|:------------:|:---------------------:|:---------------------:|:-------------:|
+|                              |              |       **FP16**        |       **FP16**        |  **Support**  |
+| **NVIDIA / OpenCL-PTX**      | RTX 3070     |      66 tokens/s      |    55.46 tokens/s     |       ✅      |
+|                              | RTX 4090     |    86.11 tokens/s     |    75.32 tokens/s     |       ✅      |
+|                              | RTX 5090     |    117.65 tokens/s    |    112.68 tokens/s    |       ✅      |
+|                              | L4 Tensor    |    52.96 tokens/s     |    22.68 tokens/s     |       ✅      |
+| **Intel / OpenCL**           | Arc A770     |    15.65 tokens/s     |     7.02 tokens/s     |      (WIP)    |
+| **Apple Silicon / OpenCL**   | M3 Pro       |    14.04 tokens/s     |     6.78 tokens/s     |      (WIP)    |
+|                              | M4 Pro       |    16.77 tokens/s     |     8.56 tokens/s     |      (WIP)    |
+| **AMD / OpenCL**             | Radeon RX    |         (WIP)         |         (WIP)         |      (WIP)    |
+
+##### ⚠️ Note on Apple Silicon Performance
+
+TornadoVM currently runs on Apple Silicon via [OpenCL](https://developer.apple.com/opencl/), which has been officially deprecated since macOS 10.14.
+
+Despite being deprecated, OpenCL can still run on Apple Silicon; albeit, with older drivers which do not support all optimizations of TornadoVM. Therefore, the performance is not optimal since TornadoVM does not have a Metal backend yet (it currently has OpenCL, PTX, and SPIR-V backends). We recommend using Apple silicon for development and for performance testing to use OpenCL/PTX compatible Nvidia GPUs for the time being (until we add a Metal backend to TornadoVM and start optimizing it).
 
 -----------
 ## 📦 Maven Dependency
