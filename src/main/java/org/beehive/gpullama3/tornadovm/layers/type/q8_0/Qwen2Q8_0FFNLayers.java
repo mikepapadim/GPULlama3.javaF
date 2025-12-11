@@ -107,7 +107,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_qkv_bias", fusedQKVBiasWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
@@ -230,7 +230,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 config.kvDim(),               // kvDim
                 layerIndex,                   // layer offset
                 config.contextLength());      // max sequence length
-        
+
         // Flash Attention
         unifiedLayer.task("attention",
                 Qwen2Kernels::processHeadsFlashAttention,
@@ -247,9 +247,18 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 layerIndex,                   // layer index
                 config.contextLength());      // context length
 
-        unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte, context,
-                        state.wrapXb,  state.wrapX, weights.woLayered[layerIndex].asByteArray(), config.dim(), config.dim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN,
+        // Output Projection with Residual
+        unifiedLayer.task("attn_output_proj",
+                TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
+                context,
+                qwen2State.wrapXb,            // input: attention output
+                qwen2State.wrapX,             // output: wrapX += Wo · wrapXb
+                weights.woLayered[layerIndex].asByteArray(),  // Wo
+                config.dim(),                 // input dim
+                config.dim(),                 // output dim
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        unifiedLayer.task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN,
                         state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
 
         // Fused RMS Apply + Gate/Up Projection + SiLU + GLU
