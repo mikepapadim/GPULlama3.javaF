@@ -66,12 +66,10 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         WorkerGrid configKvDimRowMajorGlobalWorker = new WorkerGrid1D(configKvDimRowMajorGlobal);
         configKvDimRowMajorGlobalWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC, 1, 1);
 
-        WorkerGrid qBiasWorker = new WorkerGrid1D(config.dim());
-        qBiasWorker.setGlobalWork(config.dim(), 1, 1);
-        qBiasWorker.setLocalWork(config.dim() / 8, 1, 1);
-        WorkerGrid kvBiasWorker = new WorkerGrid1D(config.kvDim());
-        kvBiasWorker.setGlobalWork(config.kvDim(), 1, 1);
-        kvBiasWorker.setLocalWork(32, 1, 1);
+        // WorkerGrid for fused QKV bias addition (dimension is dimQ)
+        WorkerGrid fusedQKVBiasWorker = new WorkerGrid1D(config.dim());
+        fusedQKVBiasWorker.setGlobalWork(config.dim(), 1, 1);
+        fusedQKVBiasWorker.setLocalWork(32, 1, 1);
 
         int configHiddenDimRowMajor = config.hiddenDim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid configHiddenDimRowMajorWorker = new WorkerGrid1D(configHiddenDimRowMajor);
@@ -188,10 +186,20 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte, context,
                         state.wrapXb,  state.wrapK, weights.wkLayered[layerIndex].asByteArray(), config.dim(), config.kvDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("vmatmul", TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte, context,
-                        state.wrapXb,   state.wrapV, weights.wvLayered[layerIndex].asByteArray(), config.dim(), config.kvDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("qbias", TransformerComputeKernelsLayered::addInPlace, state.wrapQ, weights.q_biasLayered[layerIndex].asFloatArray(), config.dim())
-                .task("kbias", TransformerComputeKernelsLayered::addInPlace, state.wrapK, weights.k_biasLayered[layerIndex].asFloatArray(), config.kvDim())
-                .task("vbias", TransformerComputeKernelsLayered::addInPlace, state.wrapV, weights.v_biasLayered[layerIndex].asFloatArray(), config.kvDim());
+                        state.wrapXb,   state.wrapV, weights.wvLayered[layerIndex].asByteArray(), config.dim(), config.kvDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        // Fused Q/K/V Bias Addition (3→1 kernel fusion)
+        unifiedLayer.task("fused_qkv_bias",
+                TransformerComputeKernelsLayered::fusedQKvBiasAddition,
+                context,
+                qwen2State.wrapQ,             // Q (in/out)
+                qwen2State.wrapK,             // K (in/out)
+                weights.q_biasLayered[layerIndex].asFloatArray(),   // Q bias
+                qwen2State.wrapV,             // V (in/out)
+                weights.k_biasLayered[layerIndex].asFloatArray(),   // K bias
+                weights.v_biasLayered[layerIndex].asFloatArray(),   // V bias
+                config.dim(),                 // dimQ
+                config.kvDim());              // dimKV
 
         // Fused RoPE Rotation + KV Cache Write
         unifiedLayer.task("rope_and_kv_cache",
