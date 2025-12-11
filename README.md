@@ -20,6 +20,10 @@
 Runs Llama3 inference efficiently using TornadoVM's GPU acceleration.
 <br><br>
 Currently, supports <strong>Llama3</strong>, <strong>Mistral</strong>, <strong>Qwen2.5</strong>, <strong>Qwen3</strong> and <strong>Phi3</strong> models in the GGUF format.
+Also, it is used as GPU inference engine in 
+<a href="https://docs.quarkiverse.io/quarkus-langchain4j/dev/gpullama3-chat-model.html" target="_blank">Quarkus</a> 
+and 
+<a href="https://docs.langchain4j.dev/integrations/language-models/gpullama3-java" target="_blank">LangChain4J</a>.
 <br><br>
 Builds on <a href="https://github.com/mukel/llama3.java">Llama3.java</a> by <a href="https://github.com/mukel">Alfonso² Peterssen</a>.
 Previous integration of TornadoVM and Llama2 it can be found in <a href="https://github.com/mikepapadim/llama2.tornadovm.java">llama2.tornadovm</a>.
