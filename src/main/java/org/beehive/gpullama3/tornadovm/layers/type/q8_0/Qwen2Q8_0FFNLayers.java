@@ -106,11 +106,11 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_qkv_bias", fusedQKVBiasWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
         }
         return tornadoForwardScheduler;
     }
@@ -230,12 +230,24 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 config.kvDim(),               // kvDim
                 layerIndex,                   // layer offset
                 config.contextLength());      // max sequence length
+        
+        // Flash Attention
+        unifiedLayer.task("attention",
+                Qwen2Kernels::processHeadsFlashAttention,
+                context,
+                qwen2State.wrapQ,             // query vectors
+                qwen2State.wrapKeyCache,      // key cache
+                qwen2State.wrapValueCache,    // value cache
+                qwen2State.wrapXb,            // output: attention result
+                config.numberOfHeads(),       // nHeads
+                config.headSize(),            // headSize
+                config.kvDim(),               // kvDim
+                config.kvMul(),               // kvMul (nHeads / nHeadKv)
+                qwen2State.positionHolder,    // position
+                layerIndex,                   // layer index
+                config.contextLength());      // context length
 
-        unifiedLayer.task("parallel-attention", Qwen2Kernels::processHeadsFlashAttention, context,
-                        state.wrapQ, state.wrapKeyCache, state.wrapValueCache, state.wrapXb,
-                        config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(),
-                        state.positionHolder, layerIndex, config.contextLength())
-                .task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte, context,
+        unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte, context,
                         state.wrapXb,  state.wrapX, weights.woLayered[layerIndex].asByteArray(), config.dim(), config.dim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN,
                         state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
