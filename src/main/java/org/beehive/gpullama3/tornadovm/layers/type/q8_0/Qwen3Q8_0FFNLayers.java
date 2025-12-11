@@ -165,23 +165,26 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // === Data Setup ===
         unifiedLayer.consumeFromDevice(qwen3State.wrapX);
-        // Transfer Q8_0 weights for this layer (quants and scales)
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                weights.rms_att_weightLayered[layerIndex].asFloatArray(), //
-                weights.wqLayered[layerIndex].asByteArray(),
-                weights.wkLayered[layerIndex].asByteArray(),
-                weights.wvLayered[layerIndex].asByteArray(),
-                weights.woLayered[layerIndex].asByteArray(),
-                weights.rms_att_KNormLayered[layerIndex].asFloatArray(), //
-                weights.rms_att_QNormLayered[layerIndex].asFloatArray(),//
-                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), //
-                weights.w1Layered[layerIndex].asByteArray(),
-                weights.w2Layered[layerIndex].asByteArray(),
-                weights.w3Layered[layerIndex].asByteArray());
-
-        // Configure layer data transfers (EVERY_EXECUTION and device persistence)
+                // Attention weights
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(),   // RMS norm weights
+                weights.wqLayered[layerIndex].asByteArray(),                // Q projection
+                weights.wkLayered[layerIndex].asByteArray(),                // K projection
+                weights.wvLayered[layerIndex].asByteArray(),                // V projection
+                weights.woLayered[layerIndex].asByteArray(),                // Output projection
+                // Qwen3-specific Q/K norm weights
+                weights.rms_att_KNormLayered[layerIndex].asFloatArray(),    // K RMSNorm weights
+                weights.rms_att_QNormLayered[layerIndex].asFloatArray(),    // Q RMSNorm weights
+                // FFN weights
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),   // FFN RMSNorm weights
+                weights.w1Layered[layerIndex].asByteArray(),                // FFN gate projection
+                weights.w2Layered[layerIndex].asByteArray(),                // FFN down projection
+                weights.w3Layered[layerIndex].asByteArray());               // FFN up projection
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
+        // ═══════════════════════════════════════════════════════════════════════
+        //                           ATTENTION BLOCK
+        // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
         unifiedLayer.task("attn_rms_reduce",
@@ -189,16 +192,11 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                 context,
                 qwen3State.temp,              // output: scale factor
                 qwen3State.wrapX,             // input: hidden state
-                config.dim(),            // dimension
-                config.rmsNormEps(),     // epsilon
+                config.dim(),                 // dimension
+                config.rmsNormEps(),          // epsilon
                 qwen3State.localSize);        // local memory size
 
-        // QKV projections with Qwen3 GQA dimensions
-        // Q8_0 weights pass both quants and scales
-        int qDim0 = nEmbdHeadK * config.numberOfHeads();  // Query dimension
-        int kvDim0 = nEmbdGqa;                             // KV dimension (smaller due to GQA)
-        int qkvDim1 = config.dim();                        // Input dimension
-
+        // Fused RMS Apply + QKV Projection
         unifiedLayer.task("attn_rms_qkv_projection",
                 Qwen3Kernels::fusedRmsNormQKVMatmulQ8_0,
                 context,
@@ -273,7 +271,9 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                 config.dim(),       // output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        // ========== FEED-FORWARD BLOCK ==========
+        // ═══════════════════════════════════════════════════════════════════════
+        //                              FFN BLOCK
+        // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
         unifiedLayer.task("ffn_rms_reduce",
@@ -308,11 +308,13 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                         weights.w2Layered[layerIndex].asByteArray(),  // W2 (down)
                         config.hiddenDim(),     // input dim
                         config.dim(),           // output dim
-                        LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .persistOnDevice(state.wrapX);
+                        LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        unifiedLayer.persistOnDevice(state.wrapX);
 
         return unifiedLayer;
     }
+    // @formatter:on
 
     /**
      * Configure data transfers for first and subsequent layers
