@@ -103,7 +103,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", matmul1Worker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNW1W3Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", projectionTwoWorker);
@@ -262,12 +262,16 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                 layerIndex,                   // layer index
                 qwen3Config.contextLength()); // context length
 
-        // Output projection (Q8_0 weights)
-        unifiedLayer.task("matmul1",
+        // Output Projection with Residual
+        unifiedLayer.task("attn_output_proj",
                 TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
-                context, qwen3State.wrapXb, qwen3State.wrapX,
-                weights.woLayered[layerIndex].asByteArray(),
-                qDim0, config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
+                context,
+                qwen3State.wrapXb,  // input: attention output
+                qwen3State.wrapX,   // output: wrapX += Wo · wrapXb
+                weights.woLayered[layerIndex].asByteArray(),    // Wo [dim x qDim]
+                nEmbdHeadK * qwen3Config.numberOfHeads(),       // input dim (qDim)
+                config.dim(),       // output dim
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // ========== FEED-FORWARD BLOCK ==========
 
