@@ -64,7 +64,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
     }
 
     @Override
-    public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
+    public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
 
         int matmulQGlobal = nEmbdHeadK * config.numberOfHeads() * LOCAL_WORK_GROUP_SIZE_ALLOC;
@@ -98,20 +98,20 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         WorkerGrid fusedQKVWorker = WorkerGridFactory.genericWorker(fusedQKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
             if (shouldUseFinalNormalization()) {
-                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_finalize", rmsNormWorker);
+                gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_finalize", rmsNormWorker);
             }
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNW1W3Worker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", projectionTwoWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNW1W3Worker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", projectionTwoWorker);
         }
-        return tornadoForwardScheduler;
+        return gridScheduler;
     }
 
     @Override
