@@ -109,8 +109,8 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", configDimRowMajorGlobalWorker);
         }
         return tornadoForwardScheduler;
     }
@@ -283,8 +283,16 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 config.hiddenDim(),           // hidden dimension
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        unifiedLayer.task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte, context,
-                        state.wrapHb, state.wrapX, weights.w2Layered[layerIndex].asByteArray(), config.hiddenDim(), config.dim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
+        // Down Projection with Residual
+        unifiedLayer.task("ffn_down_proj",
+                        TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
+                        context,
+                        qwen2State.wrapHb,            // input: FFN intermediate
+                        qwen2State.wrapX,             // output: wrapX += W2 · wrapHb
+                        weights.w2Layered[layerIndex].asByteArray(),  // W2 (down)
+                        config.hiddenDim(),           // input dim
+                        config.dim(),                 // output dim
+                        LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .persistOnDevice(
                         state.wrapX
                 );
