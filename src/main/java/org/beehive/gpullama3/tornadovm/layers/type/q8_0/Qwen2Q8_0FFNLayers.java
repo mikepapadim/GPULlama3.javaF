@@ -159,21 +159,27 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
       TaskGraph  unifiedLayer = new TaskGraph("layer_" + layerIndex);
         unifiedLayer.consumeFromDevice(state.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                //Copy-in weights per layer for batched-layered layout
+                // Attention weights
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
                 weights.wqLayered[layerIndex].asByteArray(),
                 weights.wkLayered[layerIndex].asByteArray(),
                 weights.wvLayered[layerIndex].asByteArray(),
                 weights.woLayered[layerIndex].asByteArray(),
+                // Qwen2-specific bias terms
                 weights.q_biasLayered[layerIndex].asFloatArray(),
                 weights.k_biasLayered[layerIndex].asFloatArray(),
                 weights.v_biasLayered[layerIndex].asFloatArray(),
+                // FFN weights
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
                 weights.w1Layered[layerIndex].asByteArray(),
                 weights.w2Layered[layerIndex].asByteArray(),
                 weights.w3Layered[layerIndex].asByteArray()
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
+
+        // ═══════════════════════════════════════════════════════════════════════
+        //                           ATTENTION BLOCK
+        // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
         unifiedLayer.task("attn_rms_reduce",
@@ -258,6 +264,10 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 config.dim(),                 // output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
+        // ═══════════════════════════════════════════════════════════════════════
+        //                              FFN BLOCK
+        // ═══════════════════════════════════════════════════════════════════════
+
         // RMS Normalization - compute scale factor
         unifiedLayer.task("ffn_rms_reduce",
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
@@ -302,10 +312,10 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                         weights.w2Layered[layerIndex].asByteArray(),  // W2 (down)
                         config.hiddenDim(),           // input dim
                         config.dim(),                 // output dim
-                        LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .persistOnDevice(
-                        state.wrapX
-                );
+                        LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        unifiedLayer.persistOnDevice(state.wrapX);
+
         return unifiedLayer;
 
     }
