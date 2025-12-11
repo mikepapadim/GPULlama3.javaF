@@ -268,6 +268,16 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 config.rmsNormEps(),          // epsilon
                 qwen2State.localSize);        // local memory size
 
+        // Final normalization (non-NVIDIA only)
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("ffn_rms_finalize",
+                    TransformerComputeKernelsLayered::reductionFinalNormalization,
+                    context,
+                    qwen2State.tempFFN,       // scale factor (in/out)
+                    config.dim(),             // dimension
+                    config.rmsNormEps());     // epsilon
+        }
+
         // Fused RMS Apply + Gate/Up Projection + SiLU + GLU
         // (Replaces mapContextFFN + fusedFeedForwardWithSiLUAndGLUActivation)
         unifiedLayer.task("rms_ffn_gate_up",
