@@ -108,8 +108,8 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", configDimRowMajorGlobalWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
         }
         return tornadoForwardScheduler;
@@ -258,8 +258,15 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 config.dim(),                 // output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        unifiedLayer.task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN,
-                        state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
+        // RMS Normalization - compute scale factor
+        unifiedLayer.task("ffn_rms_reduce",
+                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                context,
+                qwen2State.tempFFN,           // output: scale factor
+                qwen2State.wrapX,             // input: hidden state
+                config.dim(),                 // dimension
+                config.rmsNormEps(),          // epsilon
+                qwen2State.localSize);        // local memory size
 
         // Fused RMS Apply + Gate/Up Projection + SiLU + GLU
         // (Replaces mapContextFFN + fusedFeedForwardWithSiLUAndGLUActivation)
