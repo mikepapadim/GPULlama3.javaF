@@ -98,7 +98,7 @@ Ensure you have the following installed and configured:
 
 - **Java 21**: Required for Vector API support & TornadoVM.
 - [TornadoVM](https://github.com/beehive-lab/TornadoVM) with OpenCL or PTX backends.
-- [Maven](https://maven.apache.org/): For building the Java project.
+- GCC/G++ 13 or newer: Required to build and run TornadoVM native components.
 
 ### Install, Build, and Run
 
@@ -106,37 +106,49 @@ When cloning this repository, use the `--recursive` flag to ensure that TornadoV
 
 ```bash
 # Clone the repository with all submodules
-git clone --recursive https://github.com/beehive-lab/GPULlama3.java.git
+git clone https://github.com/beehive-lab/GPULlama3.java.git
+```
 
+#### Install the TornadoVM SDK on Linux or macOS
+
+Ensure that your JAVA_HOME points to a supported JDK before using the SDK. Download an SDK package matching your OS, architecture, and accelerator backend (opencl, ptx).
+All pre-built SDKs are available on the TornadoVM [Releases Page](https://github.com/beehive-lab/TornadoVM/releases).
+#After extracting the SDK, add its bin/ directory to your PATH so the `tornado` command becomes available.
+
+##### Linux (x86_64)
+
+```bash
+wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-linux-amd64.zip
+unzip tornadovm-2.1.0-opencl-linux-amd64.zip
+# Replace <path-to-sdk> manually with the absolute path of the extracted folder
+export TORNADO_SDK="<path-to-sdk>/tornadovm-2.1.0-opencl"
+export PATH=$TORNADO_SDK/bin:$PATH
+
+tornado --devices
+tornado --version
+```
+
+##### macOS (Apple Silicon)
+
+```bash
+wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-mac-aarch64.zip
+unzip tornadovm-2.1.0-opencl-mac-aarch64.zip
+# Replace <path-to-sdk> manually with the absolute path of the extracted folder
+export TORNADO_SDK="<path-to-sdk>/tornadovm-2.1.0-opencl"
+export PATH=$TORNADO_SDK/bin:$PATH
+
+tornado --devices
+tornado --version
+```
+
+#### Build the GPULlama3.java
+
+```bash
 # Navigate to the project directory
 cd GPULlama3.java
 
-# Update the submodules to match the exact commit point recorded in this repository
-git submodule update --recursive
-```
-
-#### On Linux or macOS
-```bash
-# Enter the TornadoVM submodule directory
-cd external/tornadovm
-
-# Optional: Create and activate a Python virtual environment if needed
-python3 -m venv venv
-source ./venv/bin/activate
-
-# Install TornadoVM with a supported JDK 21 and select the backends (--backend opencl,ptx).
-# To see the compatible JDKs run: ./bin/tornadovm-installer --listJDKs
-# For example, to install with OpenJDK 21 and build the OpenCL backend, run: 
-./bin/tornadovm-installer --jdk jdk21 --backend opencl
-
-# Source the TornadoVM environment variables
-source setvars.sh
-
-# Navigate back to the project root directory
-cd ../../
-
 # Source the project-specific environment paths -> this will ensure the correct paths are set for the project and the TornadoVM SDK
-# Expect to see: [INFO] Environment configured for Llama3 with TornadoVM at: /home/YOUR_PATH_TO_TORNADOVM
+# Expect to see: [INFO] Environment configured for Llama3 with TornadoVM at: $TORNADO_SDK
 source set_paths
 
 # Build the project using Maven (skip tests for faster build)
@@ -147,38 +159,6 @@ make
 ./llama-tornado --gpu  --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
 ```
 
-#### On Windows
-```bash
-# Enter the TornadoVM submodule directory
-cd external/tornadovm
-
-# Optional: Create and activate a Python virtual environment if needed
-python -m venv .venv
-.venv\Scripts\activate.bat
-.\bin\windowsMicrosoftStudioTools2022.cmd
-
-# Install TornadoVM with a supported JDK 21 and select the backends (--backend opencl,ptx).
-# To see the compatible JDKs run: ./bin/tornadovm-installer --listJDKs
-# For example, to install with OpenJDK 21 and build the OpenCL backend, run: 
-python bin\tornadovm-installer --jdk jdk21 --backend opencl
-
-# Source the TornadoVM environment variables
-setvars.cmd
-
-# Navigate back to the project root directory
-cd ../../
-
-# Source the project-specific environment paths -> this will ensure the correct paths are set for the project and the TornadoVM SDK
-# Expect to see: [INFO] Environment configured for Llama3 with TornadoVM at: C:\Users\YOUR_PATH_TO_TORNADOVM
-set_paths.cmd
-
-# Build the project using Maven (skip tests for faster build)
-# mvn clean package -DskipTests or just make
-make
-
-# Run the model (make sure you have downloaded the model file first -  see below)
-python llama-tornado --gpu  --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
-```
 -----------
 ## 📦 Maven Dependency
 
@@ -261,83 +241,25 @@ llama-tornado --gpu --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "te
 The above model can we swapped with one of the other models, such as `beehive-llama-3.2-3b-instruct-fp16.gguf` or `beehive-llama-3.2-8b-instruct-fp16.gguf`, depending on your needs.
 Check models below.
 
-## Download Model Files
+## Collection of Tested Models
 
-Download `FP16` quantized `Llama-3` .gguf files from:
-- https://huggingface.co/beehive-lab/Llama-3.2-1B-Instruct-GGUF-FP16
-- https://huggingface.co/beehive-lab/Llama-3.2-3B-Instruct-GGUF-FP16
-- https://huggingface.co/beehive-lab/Llama-3.2-8B-Instruct-GGUF-FP16
+### Llama3.2 Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/llama3-gpullama3java)
 
-Download `FP16` quantized `Mistral` .gguf files from:
-- https://huggingface.co/collections/beehive-lab/mistral-gpullama3java-684afabb206136d2e9cd47e0
+### Qwen 2.5 Collection 
+[https://huggingface.co/collections/beehive-lab/qwen-25-gpullama3java](https://huggingface.co/collections/beehive-lab/qwen-25-gpullama3java)
 
-Download `FP16` quantized `Qwen3` .gguf files from:
-- https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF
-- https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF
-- https://huggingface.co/ggml-org/Qwen3-4B-GGUF
-- https://huggingface.co/ggml-org/Qwen3-8B-GGUF
+### Qwen 3 Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/qwen-3-gpullama3java)
 
-Download `FP16` quantized `Qwen2.5` .gguf files from:
-- https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF
-- https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+### Phi-3 Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/phi-3-gpullama3java)
 
-Download `FP16` quantized `DeepSeek-R1-Distill-Qwen` .gguf files from:
-- https://huggingface.co/hdnh2006/DeepSeek-R1-Distill-Qwen-1.5B-GGUF
+### Mistral Collection 
+[https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/mistral-gpullama3java)
 
-Please be gentle with [huggingface.co](https://huggingface.co) servers:
-
-**Note** FP16 models are first-class citizens for the current version.
-```
-# Llama 3.2 (1B) - FP16
-wget https://huggingface.co/beehive-lab/Llama-3.2-1B-Instruct-GGUF-FP16/resolve/main/beehive-llama-3.2-1b-instruct-fp16.gguf
-
-# Llama 3.2 (3B) - FP16 
-wget https://huggingface.co/beehive-lab/Llama-3.2-3B-Instruct-GGUF-FP16/resolve/main/beehive-llama-3.2-3b-instruct-fp16.gguf
-
-# Llama 3 (8B) - FP16 
-wget https://huggingface.co/beehive-lab/Llama-3.2-8B-Instruct-GGUF-FP16/resolve/main/beehive-llama-3.2-8b-instruct-fp16.gguf
-
-# Mistral (7B) - FP16
-wget https://huggingface.co/MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3.fp16.gguf
-
-# Qwen3 (0.6B) - FP16
-wget https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-f16.gguf
-
-# Qwen3 (1.7B) - FP16
-wget https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-1.7B-f16.gguf
-
-# Qwen3 (4B) - FP16
-wget https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-4B-f16.gguf
-
-# Qwen3 (8B) - FP16
-wget https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-8B-f16.gguf
-
-# Phi-3-mini-4k - FP16
-wget https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-fp16.gguf
-
-# Qwen2.5 (0.5B)
-wget https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-f16.gguf
-
-# Qwen2.5 (1.5B)
-wget https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-fp16.gguf
-
-# DeepSeek-R1-Distill-Qwen (1.5B)
-wget https://huggingface.co/hdnh2006/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-F16.gguf
-```
-
-**[Experimental]** you can download the Q8 and Q4 used in the original implementation of Llama3.java, but for now are going to be dequanted to FP16 for TornadoVM support:
-```
-# Llama 3.2 (1B) - Q4_0
-curl -L -O https://huggingface.co/mukel/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_0.gguf
-# Llama 3.2 (3B) - Q4_0 
-curl -L -O https://huggingface.co/mukel/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_0.gguf
-# Llama 3 (8B) - Q4_0 
-curl -L -O https://huggingface.co/mukel/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_0.gguf
-# Llama 3.2 (1B) - Q8_0 
-curl -L -O https://huggingface.co/mukel/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q8_0.gguf
-# Llama 3.1 (8B) - Q8_0 
-curl -L -O https://huggingface.co/mukel/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_0.gguf
-```
+### DeepSeek-R1-Distill-Qwen Collection 
+[https://huggingface.co/collections/beehive-lab/deepseek-r1-distill-qwen-gpullama3java](https://huggingface.co/collections/beehive-lab/deepseek-r1-distill-qwen-gpullama3java)
 
 -----------
 
