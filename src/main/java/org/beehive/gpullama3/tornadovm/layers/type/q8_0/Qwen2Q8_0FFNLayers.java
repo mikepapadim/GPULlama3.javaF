@@ -102,12 +102,12 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
 
         // Map workers to tasks
         for (int i = 0; i < config.numberOfLayers(); i++) {
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_qkv_bias", fusedQKVBiasWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
@@ -175,8 +175,15 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
-        unifiedLayer.task("reductionsOneBlock" , TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp,
-                        state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
+        // RMS Normalization - compute scale factor
+        unifiedLayer.task("attn_rms_reduce",
+                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                context,
+                qwen2State.temp,              // output: scale factor
+                qwen2State.wrapX,             // input: hidden state
+                config.dim(),                 // dimension
+                config.rmsNormEps(),          // epsilon
+                qwen2State.localSize);        // local memory size
 
         unifiedLayer.task("attn_rms_qkv_projection",
                 Qwen3Kernels::fusedRmsNormQKVMatmulQ8_0,
