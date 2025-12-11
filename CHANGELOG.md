@@ -2,6 +2,12 @@
 
 All notable changes to GPULlama3.java will be documented in this file.
 
+## [0.3.1] - 2025-12-11
+
+### Model Support
+
+- Add compatibility method for langchain4j and quarkus in ModelLoader ([#87](https://github.com/beehive-lab/GPULlama3.java/pull/87))
+
 ## [0.3.0] - 2025-12-11
 
 ### Model Support

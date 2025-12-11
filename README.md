@@ -165,7 +165,7 @@ You can add **GPULlama3.java** directly to your Maven project by including the f
 <dependency>
     <groupId>io.github.beehive-lab</groupId>
     <artifactId>gpu-llama3</artifactId>
-    <version>0.3.0</version>
+    <version>0.3.1</version>
 </dependency>
 ```
 
