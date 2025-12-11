@@ -236,14 +236,14 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 phi3Config.rmsNormEps(),      // epsilon
                 phi3State.localSize);         // local memory size
 
-                if (shouldUseFinalNormalization()) {
-                    unifiedLayer.task("attn_rms_finalize",
-                        TransformerComputeKernelsLayered::reductionFinalNormalization,
-                        context,
-                        state.temp,
-                        config.dim(),
-                        config.rmsNormEps());
-                }
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("attn_rms_finalize",
+                TransformerComputeKernelsLayered::reductionFinalNormalization,
+                context,
+                state.temp,
+                config.dim(),
+                config.rmsNormEps());
+        }
 
         // Fused: RMS apply + Q8 QKV matmul + direct Q/K/V split
         unifiedLayer.task("attn_rms_qkv_projection_q8",
