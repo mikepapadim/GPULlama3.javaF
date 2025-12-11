@@ -106,7 +106,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qbias", qBiasWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kbias", kvBiasWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vbias", kvBiasWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope", ropeWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", configHiddenDimRowMajorWorker);
@@ -115,7 +115,6 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
         }
         return tornadoForwardScheduler;
     }
@@ -192,12 +191,25 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                         state.wrapXb,   state.wrapV, weights.wvLayered[layerIndex].asByteArray(), config.dim(), config.kvDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("qbias", TransformerComputeKernelsLayered::addInPlace, state.wrapQ, weights.q_biasLayered[layerIndex].asFloatArray(), config.dim())
                 .task("kbias", TransformerComputeKernelsLayered::addInPlace, state.wrapK, weights.k_biasLayered[layerIndex].asFloatArray(), config.kvDim())
-                .task("vbias", TransformerComputeKernelsLayered::addInPlace, state.wrapV, weights.v_biasLayered[layerIndex].asFloatArray(), config.kvDim())
-                .task("rope", Qwen3Kernels::ropeRotation,context, state.positionHolder, state.wrapQ, state.wrapK, config.numberOfKeyValueHeads(),
-                        config.headSize())
-                .task("copyToCaches", TransformerComputeKernelsLayered::copyToCache,
-                        state.wrapKeyCache, state.wrapK,  state.wrapValueCache, state.wrapV, state.positionHolder, config.kvDim(), layerIndex, config.contextLength())
-                .task("parallel-attention", Qwen2Kernels::processHeadsFlashAttention, context,
+                .task("vbias", TransformerComputeKernelsLayered::addInPlace, state.wrapV, weights.v_biasLayered[layerIndex].asFloatArray(), config.kvDim());
+
+        // Fused RoPE Rotation + KV Cache Write
+        unifiedLayer.task("rope_and_kv_cache",
+                Qwen3Kernels::ropeRotationWithCacheCopy,
+                context,
+                qwen2State.positionHolder,    // current sequence position
+                qwen2State.wrapQ,             // Q (rotated in-place)
+                qwen2State.wrapK,             // K (rotated in-place)
+                qwen2State.wrapV,             // V (copied to cache)
+                qwen2State.wrapKeyCache,      // key cache (write)
+                qwen2State.wrapValueCache,    // value cache (write)
+                config.numberOfKeyValueHeads(), // nHeadKv
+                config.headSize(),            // per-head dimension
+                config.kvDim(),               // kvDim
+                layerIndex,                   // layer offset
+                config.contextLength());      // max sequence length
+
+        unifiedLayer.task("parallel-attention", Qwen2Kernels::processHeadsFlashAttention, context,
                         state.wrapQ, state.wrapKeyCache, state.wrapValueCache, state.wrapXb,
                         config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(),
                         state.positionHolder, layerIndex, config.contextLength())
