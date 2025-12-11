@@ -107,10 +107,9 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", configHiddenDimRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
         }
         return tornadoForwardScheduler;
@@ -232,12 +231,24 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                 .task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte, context,
                         state.wrapXb,  state.wrapX, weights.woLayered[layerIndex].asByteArray(), config.dim(), config.dim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN,
-                        state.wrapX, config.dim(), config.rmsNormEps(), state.localSize)
-                .task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb,
-                        state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN)
-                .task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte, context,
-                        state.wrapXb,   state.wrapHb, weights.w1Layered[layerIndex].asByteArray(), weights.w3Layered[layerIndex].asByteArray(), config.dim(), config.hiddenDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte, context,
+                        state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
+
+        // Fused RMS Apply + Gate/Up Projection + SiLU + GLU
+        // (Replaces mapContextFFN + fusedFeedForwardWithSiLUAndGLUActivation)
+        unifiedLayer.task("rms_ffn_gate_up",
+                TransformerComputeKernelsLayered::fusedRmsNormFFNGateUpQ8_0,
+                context,
+                qwen2State.wrapX,             // input: raw hidden state (FP32)
+                qwen2State.wrapHb,            // output: SiLU(x·W1) ⊙ (x·W3)
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),  // RMS weights
+                qwen2State.tempFFN,           // RMS scale factor
+                weights.w1Layered[layerIndex].asByteArray(),          // W1 (gate)
+                weights.w3Layered[layerIndex].asByteArray(),          // W3 (up)
+                config.dim(),                 // input dimension
+                config.hiddenDim(),           // hidden dimension
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        unifiedLayer.task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte, context,
                         state.wrapHb, state.wrapX, weights.w2Layered[layerIndex].asByteArray(), config.hiddenDim(), config.dim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .persistOnDevice(
                         state.wrapX
