@@ -234,6 +234,12 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 phi3Config.rmsNormEps(),      // epsilon
                 phi3State.localSize);         // local memory size
 
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("attn_rms_finalize",
+                    TransformerComputeKernelsLayered::reductionFinalNormalization,
+                    context, state.temp, config.dim(), config.rmsNormEps());
+        }
+
         unifiedLayer.task("attn_rms_qkv_projection", Phi3Kernels::fusedRmsNormQKVMatmulDirect,
                 context, phi3State.wrapX,              // input
                 phi3State.wrapQ,              // output Q

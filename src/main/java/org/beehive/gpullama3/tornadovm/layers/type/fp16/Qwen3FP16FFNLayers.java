@@ -264,6 +264,15 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3Config.rmsNormEps(),     // epsilon
                 qwen3State.localSize);        // local memory size
 
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("attn_rms_finalize",
+                    TransformerComputeKernelsLayered::reductionFinalNormalization,
+                    context,
+                    state.temp,
+                    config.dim(),
+                    config.rmsNormEps());
+        }
+
         // Fused RMS Apply + QKV Projection
         unifiedLayer.task("attn_rms_qkv_projection",
                 Qwen3Kernels::fusedRmsNormQKVMatmul,
