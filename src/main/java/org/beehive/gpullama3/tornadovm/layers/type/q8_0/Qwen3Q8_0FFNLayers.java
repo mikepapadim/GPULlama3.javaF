@@ -106,7 +106,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNW1W3Worker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", projectionTwoWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", projectionTwoWorker);
         }
         return tornadoForwardScheduler;
     }
@@ -299,11 +299,16 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                 qwen3Config.hiddenDim(),      // hidden dimension
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        unifiedLayer.task("projectionTwo",
+        // Down Projection with Residual
+        unifiedLayer.task("ffn_down_proj",
                         TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
-                        context, qwen3State.wrapHb, qwen3State.wrapX,
-                        weights.w2Layered[layerIndex].asByteArray(),
-                        config.hiddenDim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+                        context,
+                        qwen3State.wrapHb,      // input: FFN intermediate
+                        qwen3State.wrapX,       // output: wrapX += W2 · wrapHb
+                        weights.w2Layered[layerIndex].asByteArray(),  // W2 (down)
+                        config.hiddenDim(),     // input dim
+                        config.dim(),           // output dim
+                        LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .persistOnDevice(state.wrapX);
 
         return unifiedLayer;
