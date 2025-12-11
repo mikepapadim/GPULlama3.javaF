@@ -105,6 +105,9 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
+            if (shouldUseFinalNormalization()) {
+                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_finalize", rmsNormWorker);
+            }
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNW1W3Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", projectionTwoWorker);
         }
@@ -284,6 +287,16 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
                 qwen3Config.dim(),            // dimension
                 qwen3Config.rmsNormEps(),     // epsilon
                 qwen3State.localSize);        // local memory size
+
+        // Final normalization (non-NVIDIA only)
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("ffn_rms_finalize",
+                    TransformerComputeKernelsLayered::reductionFinalNormalization,
+                    context,
+                    qwen3State.tempFFN,       // scale factor (in/out)
+                    qwen3Config.dim(),        // dimension
+                    qwen3Config.rmsNormEps()); // epsilon
+        }
 
         // Fused RMS Apply + Gate/Up Projection + SiLU + GLU
         unifiedLayer.task("rms_ffn_gate_up",
