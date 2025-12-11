@@ -104,7 +104,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNW1W3Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", projectionTwoWorker);
         }
@@ -275,13 +275,15 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // ========== FEED-FORWARD BLOCK ==========
 
-        // RMS norm for FFN input
-        unifiedLayer.task("reductionsOneBlockFFN",
+        // RMS Normalization - compute scale factor
+        unifiedLayer.task("ffn_rms_reduce",
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                context, qwen3State.tempFFN, qwen3State.wrapX, config.dim(), config.rmsNormEps(), qwen3State.localSize)
-                .task("mapContextFFN",
-                        TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
-                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), qwen3State.tempFFN);
+                context,
+                qwen3State.tempFFN,           // output: scale factor
+                qwen3State.wrapX,             // input: hidden state
+                qwen3Config.dim(),            // dimension
+                qwen3Config.rmsNormEps(),     // epsilon
+                qwen3State.localSize);        // local memory size
 
         // Fused RMS Apply + Gate/Up Projection + SiLU + GLU
         unifiedLayer.task("rms_ffn_gate_up",
