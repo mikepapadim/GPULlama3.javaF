@@ -1,6 +1,6 @@
 //JAVA 21
 //PREVIEW
-//DEPS io.github.beehive-lab:gpu-llama3:0.3.1
+//DEPS io.github.beehive-lab:gpu-llama3:0.3.2-dev
 //DEPS io.github.beehive-lab:tornado-api:2.1.0
 //DEPS io.github.beehive-lab:tornado-runtime:2.1.0
 
@@ -89,7 +89,7 @@ public class LlamaTornadoCli {
 
         // Check if help requested
         if (args.length == 0 || hasHelpFlag(args)) {
-//            Options.printUsage(System.out);
+            Options.printUsage(System.out);
             System.exit(0);
         }
 
@@ -98,9 +98,7 @@ public class LlamaTornadoCli {
             Options options = Options.parseOptions(args);
 
             // Load model
-            System.out.println("Loading model from: " + options.modelPath());
             Model model = loadModel(options);
-            System.out.println("Model loaded successfully!");
 
             // Create sampler
             Sampler sampler = createSampler(model, options);
