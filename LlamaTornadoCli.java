@@ -5,6 +5,8 @@
 //DEPS io.github.beehive-lab:tornado-runtime:2.1.0
 
 //SOURCES TornadoFlags.java
+// === Set to not get annoying warnings about annotation processing
+//JAVAC_OPTIONS -proc:full
 
 // Compiler options
 //JAVAC_OPTIONS --enable-preview
@@ -87,7 +89,7 @@ public class LlamaTornadoCli {
 
         // Check if help requested
         if (args.length == 0 || hasHelpFlag(args)) {
-            Options.printUsage(System.out);
+//            Options.printUsage(System.out);
             System.exit(0);
         }
 
@@ -137,8 +139,8 @@ public class LlamaTornadoCli {
     private static void printBanner() {
         System.out.println("""
             ╔══════════════════════════════════════════════════════════╗
-            ║        Llama-Tornado CLI - GPU-Accelerated LLM          ║
-            ║           Powered by TornadoVM & Java 21                ║
+            ║        Llama-Tornado CLI - GPU-Accelerated LLM           ║
+            ║           Powered by TornadoVM & Java 21                 ║
             ╚══════════════════════════════════════════════════════════╝
             """);
     }
