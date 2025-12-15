@@ -242,6 +242,70 @@ llama-tornado --gpu --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "te
 The above model can we swapped with one of the other models, such as `beehive-llama-3.2-3b-instruct-fp16.gguf` or `beehive-llama-3.2-8b-instruct-fp16.gguf`, depending on your needs.
 Check models below.
 
+-----------
+
+## 🚀 Running with JBang (Pure Java CLI)
+
+You can run llama-tornado as a pure Java script using [JBang](https://www.jbang.dev/) without building or installing anything. This provides a simple, script-like experience similar to [Jlama's CLI](https://github.com/tjake/Jlama).
+
+### Prerequisites for JBang
+
+1. **Install JBang**: Follow the [JBang installation guide](https://www.jbang.dev/download/)
+2. **TornadoVM SDK**: You still need TornadoVM installed and `TORNADO_SDK` environment variable set (see Setup section above)
+
+### Quick Start with JBang
+
+```bash
+# Basic usage - interactive chat mode
+jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf --interactive
+
+# Single instruction mode
+jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf -p "Explain quantum computing"
+
+# With TornadoVM GPU acceleration
+jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf \
+     -p "Tell me a joke" --use-tornadovm true
+
+# Custom generation parameters
+jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf \
+     -p "Write a short story" \
+     --temperature 0.7 \
+     --top-p 0.9 \
+     --max-tokens 512
+```
+
+### JBang vs llama-tornado Script
+
+| Feature | JBang CLI | llama-tornado Script |
+|---------|-----------|---------------------|
+| **Installation** | No build required | Requires `mvn package` |
+| **Dependencies** | Auto-downloaded | Included in fat JAR |
+| **TornadoVM Setup** | Basic (via dependencies) | Full (via tornado command wrapper) |
+| **GPU Acceleration** | Limited | Full support with all TornadoVM optimizations |
+| **Use Case** | Quick experimentation, CPU inference | Production use, full GPU acceleration |
+
+### How It Works
+
+The `LlamaTornadoCli.java` file includes special JBang directives at the top:
+
+```java
+#!/usr/bin/env jbang
+//JAVA 21
+//PREVIEW
+//DEPS io.github.beehive-lab:gpu-llama3:0.3.1
+//DEPS io.github.beehive-lab:tornado-api:2.1.0
+//DEPS io.github.beehive-lab:tornado-runtime:2.1.0
+```
+
+These directives tell JBang to:
+- Use Java 21 with preview features
+- Download the required Maven dependencies automatically
+- Set up the necessary JVM options for Vector API and TornadoVM
+
+**Note**: For full GPU acceleration with all TornadoVM optimizations, we recommend using the `llama-tornado` script instead, which properly configures all TornadoVM runtime parameters.
+
+-----------
+
 ## Collection of Tested Models
 
 ### Llama3.2 Collection 
