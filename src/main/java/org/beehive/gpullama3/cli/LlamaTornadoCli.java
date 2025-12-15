@@ -1,33 +1,3 @@
-#!/usr/bin/env jbang
-//JAVA 21
-//PREVIEW
-//DEPS io.github.beehive-lab:gpu-llama3:0.3.1
-//DEPS io.github.beehive-lab:tornado-api:2.1.0
-//DEPS io.github.beehive-lab:tornado-runtime:2.1.0
-
-// Compiler options
-//JAVAC_OPTIONS --enable-preview
-//JAVAC_OPTIONS --add-modules=jdk.incubator.vector
-
-// JVM options for TornadoVM
-//JAVA_OPTIONS --enable-preview
-//JAVA_OPTIONS --add-modules=jdk.incubator.vector
-//JAVA_OPTIONS -XX:-UseCompressedOops
-//JAVA_OPTIONS -XX:+UnlockExperimentalVMOptions
-//JAVA_OPTIONS -XX:+EnableJVMCI
-//JAVA_OPTIONS -XX:+UseJVMCICompiler
-//JAVA_OPTIONS -XX:+UseParallelGC
-
-// Module exports for TornadoVM (adjust paths based on your TornadoVM installation)
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.nodes=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.nodes.java=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.nodes.calc=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.nodes.util=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.core.common=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.graph=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.lir=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.api.runtime=tornado.runtime
-
 package org.beehive.gpullama3.cli;
 
 import org.beehive.gpullama3.Options;
@@ -44,11 +14,9 @@ import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
  * LlamaTornadoCli - Pure Java CLI for running llama-tornado models
  *
  * This class provides a standalone command-line interface for running LLaMA models
- * with TornadoVM acceleration. It can be executed directly with JBang or as a
- * compiled Java application.
+ * with TornadoVM acceleration. This version is compiled as part of the Maven build.
  *
- * Usage with JBang:
- *   jbang LlamaTornadoCli.java --model path/to/model.gguf --prompt "Your prompt here"
+ * For JBang usage, use the LlamaTornadoCli.java file in the root directory.
  *
  * Usage as compiled application:
  *   java --enable-preview --add-modules jdk.incubator.vector \
@@ -58,17 +26,19 @@ import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
  *
  * Examples:
  *   # Interactive chat mode
- *   jbang LlamaTornadoCli.java -m model.gguf --interactive
+ *   java -cp target/gpu-llama3-0.3.1.jar \
+ *        org.beehive.gpullama3.cli.LlamaTornadoCli \
+ *        -m model.gguf --interactive
  *
  *   # Single instruction mode
- *   jbang LlamaTornadoCli.java -m model.gguf -p "Explain quantum computing"
+ *   java -cp target/gpu-llama3-0.3.1.jar \
+ *        org.beehive.gpullama3.cli.LlamaTornadoCli \
+ *        -m model.gguf -p "Explain quantum computing"
  *
- *   # With TornadoVM acceleration
- *   jbang LlamaTornadoCli.java -m model.gguf -p "Hello" --use-tornadovm true
- *
- *   # Custom temperature and sampling
- *   jbang LlamaTornadoCli.java -m model.gguf -p "Tell me a story" \
- *        --temperature 0.7 --top-p 0.9 --max-tokens 512
+ *   # With TornadoVM acceleration (requires TornadoVM runtime setup)
+ *   java -cp target/gpu-llama3-0.3.1.jar \
+ *        org.beehive.gpullama3.cli.LlamaTornadoCli \
+ *        -m model.gguf -p "Hello" --use-tornadovm true
  */
 public class LlamaTornadoCli {
 
