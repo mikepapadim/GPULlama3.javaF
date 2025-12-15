@@ -289,7 +289,6 @@ jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf \
 The `LlamaTornadoCli.java` file includes special JBang directives at the top:
 
 ```java
-#!/usr/bin/env jbang
 //JAVA 21
 //PREVIEW
 //DEPS io.github.beehive-lab:gpu-llama3:0.3.1

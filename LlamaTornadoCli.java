@@ -1,4 +1,3 @@
-#!/usr/bin/env jbang
 //JAVA 21
 //PREVIEW
 //DEPS io.github.beehive-lab:gpu-llama3:0.3.1
