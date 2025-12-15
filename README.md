@@ -294,12 +294,16 @@ The `LlamaTornadoCli.java` file includes special JBang directives at the top:
 //DEPS io.github.beehive-lab:gpu-llama3:0.3.1
 //DEPS io.github.beehive-lab:tornado-api:2.1.0
 //DEPS io.github.beehive-lab:tornado-runtime:2.1.0
+
+//SOURCES TornadoFlags.java
 ```
 
 These directives tell JBang to:
 - Use Java 21 with preview features
 - Download the required Maven dependencies automatically
-- Set up the necessary JVM options for Vector API and TornadoVM
+- Load TornadoVM configuration from `TornadoFlags.java`
+
+The `TornadoFlags.java` file contains all TornadoVM-specific JVM configuration (module exports, runtime settings, etc.), keeping the main CLI file clean and maintainable. This follows the same pattern as the [TornadoVM JBang examples](https://gist.github.com/maxandersen/14ecdc03c7c57fc59dfeb7ba37dd4c9c).
 
 **Note**: For full GPU acceleration with all TornadoVM optimizations, we recommend using the `llama-tornado` script instead, which properly configures all TornadoVM runtime parameters.
 

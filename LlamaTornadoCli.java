@@ -4,28 +4,15 @@
 //DEPS io.github.beehive-lab:tornado-api:2.1.0
 //DEPS io.github.beehive-lab:tornado-runtime:2.1.0
 
+//SOURCES TornadoFlags.java
+
 // Compiler options
 //JAVAC_OPTIONS --enable-preview
 //JAVAC_OPTIONS --add-modules=jdk.incubator.vector
 
-// JVM options for TornadoVM
+// JVM options for basic setup
 //JAVA_OPTIONS --enable-preview
 //JAVA_OPTIONS --add-modules=jdk.incubator.vector
-//JAVA_OPTIONS -XX:-UseCompressedOops
-//JAVA_OPTIONS -XX:+UnlockExperimentalVMOptions
-//JAVA_OPTIONS -XX:+EnableJVMCI
-//JAVA_OPTIONS -XX:+UseJVMCICompiler
-//JAVA_OPTIONS -XX:+UseParallelGC
-
-// Module exports for TornadoVM (adjust paths based on your TornadoVM installation)
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.nodes=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.nodes.java=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.nodes.calc=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.nodes.util=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.core.common=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.graph=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.lir=tornado.runtime
-//JAVA_OPTIONS --add-exports=jdk.internal.vm.compiler/org.graalvm.compiler.api.runtime=tornado.runtime
 
 package org.beehive.gpullama3.cli;
 
