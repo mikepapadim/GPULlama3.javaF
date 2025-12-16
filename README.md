@@ -255,6 +255,20 @@ You can run llama-tornado as a pure Java script using [JBang](https://www.jbang.
 
 ### Quick Start with JBang
 
+Use from catalog:
+
+```bash
+# Install JBang (if not already installed)
+curl -Ls https://sh.jbang.dev | bash -s - app setup
+
+# Run GPULlama3.java CLI
+jbang gpullama3@beehive-lab -m model.gguf -p "Tell me a joke"
+
+# Or install it as a command
+jbang app install gpullama3@beehive-lab
+gpullama3 -m model.gguf -p "Hello!"
+```
+or the local:
 ```bash
 # Basic usage - interactive chat mode
 jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf --interactive
