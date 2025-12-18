@@ -70,8 +70,6 @@ Ensure you have the following installed and configured:
 
 ### Install, Build, and Run
 
-When cloning this repository, use the `--recursive` flag to ensure that TornadoVM is properly included as submodule:
-
 ```bash
 # Clone the repository with all submodules
 git clone https://github.com/beehive-lab/GPULlama3.java.git
@@ -83,9 +81,11 @@ Ensure that your JAVA_HOME points to a supported JDK before using the SDK. Downl
 All pre-built SDKs are available on the TornadoVM [Releases Page](https://github.com/beehive-lab/TornadoVM/releases).
 #After extracting the SDK, add its bin/ directory to your PATH so the `tornado` command becomes available.
 
-##### Linux (x86_64)
+#### SDKMAN! Installation (Recommended)
 
+##### Install SDKMAN! If not installed already
 ```bash
+<<<<<<< Updated upstream
 wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-linux-amd64.zip
 unzip tornadovm-2.1.0-opencl-linux-amd64.zip
 # Replace <path-to-sdk> manually with the absolute path of the extracted folder
@@ -94,11 +94,15 @@ export PATH=$TORNADO_SDK/bin:$PATH
 
 tornado --devices
 tornado --version
+=======
+curl -s "https://get.sdkman.io" | bash
+source "$HOME/.sdkman/bin/sdkman-init.sh"
+sdk version
+>>>>>>> Stashed changes
 ```
-
-##### macOS (Apple Silicon)
-
+##### Install TornadoVM via SDKMAN!
 ```bash
+<<<<<<< Updated upstream
 wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-mac-aarch64.zip
 unzip tornadovm-2.1.0-opencl-mac-aarch64.zip
 # Replace <path-to-sdk> manually with the absolute path of the extracted folder
@@ -107,25 +111,31 @@ export PATH=$TORNADO_SDK/bin:$PATH
 
 tornado --devices
 tornado --version
+=======
+sdk install tornadovm
+>>>>>>> Stashed changes
 ```
 
-#### Build the GPULlama3.java
-
+or check all available backends:
 ```bash
-# Navigate to the project directory
-cd GPULlama3.java
+sdk list tornadovm
 
-# Source the project-specific environment paths -> this will ensure the correct paths are set for the project and the TornadoVM SDK
-# Expect to see: [INFO] Environment configured for Llama3 with TornadoVM at: $TORNADO_SDK
-source set_paths
-
-# Build the project using Maven (skip tests for faster build)
-# mvn clean package -DskipTests or just make
-make
-
-# Run the model (make sure you have downloaded the model file first -  see below)
-./llama-tornado --gpu  --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
+================================================================================
+Available Tornadovm Versions
+================================================================================
+     2.2.0-spirv                                                                
+     2.2.0-full                                                                 
+ > * 2.2.0-ptx                                                                  
+   * 2.2.0-opencl                                                               
+     2.1.0-spirv                                                                
+   * 2.1.0-full                                                                 
+   * 2.1.0-ptx                                                                  
+   * 2.1.0-opencl          
 ```
+
+
+    
+
 
 
 ----------
