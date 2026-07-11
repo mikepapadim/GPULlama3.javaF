@@ -30,10 +30,12 @@ before assembly (the safe path — the full forward isn't testable until near-co
   (`batchedGemmaDecodeRopeQOnly`) — validated (Q/K/V maxRel 7e-5; `GemmaBatchedRopeNormBench`)
 - [x] batched **per-head Q/K RMSNorm** (`batchedGemmaPerHeadRmsNorm`) + **V norm**
   (`batchedGemmaPerHeadRmsNormNoWeight`) — validated bit-exact
-- [ ] batched **pre/post RMSNorm** (`applyRmsNorm`) and **norm+residual** (`rmsNormApplyWithResidual`) — B rows
-- [ ] batched **GeGLU** gate/up (Q8) — gelu·(up), packed like `batchedFFNSwiGLUFP16Packed` but gelu
-- [ ] batched **PLE** tasks: `pleGateGeluMul`, `pleProjScaleAndNormalize`, `addAndScale`, `scaleInPlace`, `scaleInPlaceFromTensor`
-- [ ] batched **logit softcap** (`applyLogitSoftcap`) — greedy argmax is softcap-invariant (monotonic), so on-device sampling needs it only for temperature
+- [x] batched **pre-norm apply** (`batchedGemmaApplyRmsNorm`) + **norm+residual**
+  (`batchedGemmaRmsNormApplyWithResidual`) — validated; reduce via existing `batchedRmsReduceParallel`
+- [x] batched **GeGLU** gate/up (`batchedGemmaGeGLUPacked`, gelu over packed Q8 gate/up) — validated
+- [x] elementwise `scaleInPlace` / `addAndScale` / `scaleInPlaceFromTensor` — reuse `Gemma4Kernels` as-is (flat, size = B·dim)
+- [ ] batched **PLE** tasks: `pleGateGeluMul`, `pleProjScaleAndNormalize` (per-layer-embedding)
+- [x] **logit softcap** — skipped for greedy (softcap is monotonic → argmax invariant; on-device argmax unaffected)
 
 Projections reuse the existing Q8 MMA GEMMs (`gemmMMAQ8`, `gemmMMAQKVQ8`, `gemmMMAGateUpQ8`).
 

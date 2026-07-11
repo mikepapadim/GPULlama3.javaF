@@ -280,4 +280,49 @@ public final class Gemma4BatchDecodeKernels {
         qBatch.set(qBase + ic, v0q * fcr - v1q * fci);
         qBatch.set(qBase + ic + half, v0q * fci + v1q * fcr);
     }
+
+    // ── FFN / norm sandwich (batched) ────────────────────────────────────────
+
+    /**
+     * Batched GeGLU over the packed [gate|up] GEMM output (Q8 {@code gemmMMAGateUpQ8}), emitting
+     * FP16 (A operand of the W2 GEMM). {@code hb[b,i] = gelu(gate[b,i]) * up[b,i]}. Gemma uses
+     * GELU (tanh approx); fork of {@code batchedFFNSwiGLUFP16Packed}. Worker: B*hiddenDim threads.
+     */
+    public static void batchedGemmaGeGLUPacked(KernelContext context, HalfFloatArray hbFP16,
+                                               FloatArray gateUpResult, int hiddenDim) {
+        int gid = context.globalIdx;
+        int b = gid / hiddenDim;
+        int i = gid % hiddenDim;
+        int rowBase = b * 2 * hiddenDim;
+        float g = gateUpResult.get(rowBase + i);
+        float u = gateUpResult.get(rowBase + hiddenDim + i);
+        float g3 = g * g * g;
+        float gelu = 0.5f * g * (1.0f + TornadoMath.tanh(0.797885f * (g + 0.044715f * g3)));
+        hbFP16.set(gid, new HalfFloat(gelu * u));
+    }
+
+    /**
+     * Batched RMSNorm apply (pre-norm): {@code out[b,i] = weight[i] * (scale[b] * x[b,i])}, with
+     * {@code scale[b]} from {@link org.beehive.gpullama3.tornadovm.kernels.TransformerBatchPrefillKernels#batchedRmsReduceParallel}.
+     * Worker: B*dim threads. Fork of {@link Gemma4Kernels#applyRmsNorm} (per-row scale).
+     */
+    public static void batchedGemmaApplyRmsNorm(KernelContext context, FloatArray out, FloatArray x,
+                                                FloatArray weight, FloatArray scaleBatch, int dim) {
+        int gid = context.globalIdx;
+        int b = gid / dim;
+        int i = gid % dim;
+        out.set(gid, weight.get(i) * (scaleBatch.get(b) * x.get(gid)));
+    }
+
+    /**
+     * Batched sandwich-norm + residual: {@code x[b,i] += weight[i] * (scale[b] * delta[b,i])}.
+     * Fork of {@link Gemma4Kernels#rmsNormApplyWithResidual}. Worker: B*dim threads.
+     */
+    public static void batchedGemmaRmsNormApplyWithResidual(KernelContext context, FloatArray x, FloatArray delta,
+                                                            FloatArray weight, FloatArray scaleBatch, int dim) {
+        int gid = context.globalIdx;
+        int b = gid / dim;
+        int i = gid % dim;
+        x.set(gid, x.get(gid) + weight.get(i) * (scaleBatch.get(b) * delta.get(gid)));
+    }
 }
