@@ -136,4 +136,148 @@ public final class Gemma4BatchDecodeKernels {
             attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
         }
     }
+
+    // ── Per-head RMSNorm (batched) ───────────────────────────────────────────
+
+    /**
+     * Batched per-head RMSNorm with a learned scale (Gemma Q/K norm). One workgroup per
+     * (slot, head); {@code rowStride} is qDim (Q) or kvDim (K). Fork of
+     * {@link Gemma4Kernels#rmsNormPerHead}. Worker: B*nHeads workgroups × localMemSize threads.
+     */
+    public static void batchedGemmaPerHeadRmsNorm(KernelContext context, FloatArray vecBatch, FloatArray weight,
+                                                  int nHeads, int headDim, int rowStride, int localMemSize, float eps) {
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = context.localGroupSizeX;
+        int batchIdx = groupId / nHeads;
+        int headIdx = groupId % nHeads;
+        int base = batchIdx * rowStride + headIdx * headDim;
+
+        float[] localSum = context.allocateFloatLocalArray(64);
+        float partial = 0f;
+        for (int i = localId; i < headDim; i += localSize) {
+            float v = vecBatch.get(base + i);
+            partial += v * v;
+        }
+        localSum[localId] = partial;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float ss = 1.0f / TornadoMath.sqrt(localSum[0] / headDim + eps);
+        context.localBarrier();
+        for (int i = localId; i < headDim; i += localSize) {
+            vecBatch.set(base + i, weight.get(i) * (ss * vecBatch.get(base + i)));
+        }
+    }
+
+    /** Batched per-head RMSNorm without a learned scale (Gemma V norm). */
+    public static void batchedGemmaPerHeadRmsNormNoWeight(KernelContext context, FloatArray vecBatch,
+                                                          int nHeads, int headDim, int rowStride, int localMemSize, float eps) {
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = context.localGroupSizeX;
+        int batchIdx = groupId / nHeads;
+        int headIdx = groupId % nHeads;
+        int base = batchIdx * rowStride + headIdx * headDim;
+
+        float[] localSum = context.allocateFloatLocalArray(64);
+        float partial = 0f;
+        for (int i = localId; i < headDim; i += localSize) {
+            float v = vecBatch.get(base + i);
+            partial += v * v;
+        }
+        localSum[localId] = partial;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float ss = 1.0f / TornadoMath.sqrt(localSum[0] / headDim + eps);
+        context.localBarrier();
+        for (int i = localId; i < headDim; i += localSize) {
+            vecBatch.set(base + i, ss * vecBatch.get(base + i));
+        }
+    }
+
+    // ── NEOX RoPE (batched decode) ───────────────────────────────────────────
+
+    /**
+     * Batched NEOX RoPE + per-slot KV write for own-KV layers. Fork of
+     * {@link Gemma4Kernels#ropeNeoxRotateAndCacheCopy}: rotates Q (all heads) and K (KV heads),
+     * writes rotated-K / raw-V into the slot's own KV region at its own position.
+     * Worker: B*nHeads*(headDim/2) global threads.
+     */
+    public static void batchedGemmaDecodeRopeNeox(KernelContext context,
+                                                  IntArray seqPositions,
+                                                  FloatArray qBatch, FloatArray kBatch, FloatArray vBatch,
+                                                  FloatArray keyCache, FloatArray valueCache,
+                                                  FloatArray freqCisReal, FloatArray freqCisImag,
+                                                  int nHeads, int nHeadKv, int headDim,
+                                                  int layerOff, int slotStride) {
+        // qDim = nHeads*headDim, kvDim = nHeadKv*headDim derived to stay within the task arg limit;
+        // layerOff = layerIndex*contextLength*kvDim, slotStride = numLayers*contextLength*kvDim.
+        int qDim = nHeads * headDim;
+        int kvDim = nHeadKv * headDim;
+        int half = headDim / 2;
+        int g = context.globalIdx;
+        int batchIdx = g / (nHeads * half);
+        int rem = g % (nHeads * half);
+        int h = rem / half;
+        int ic = rem % half;
+
+        int pos = seqPositions.get(batchIdx);
+        float fcr = freqCisReal.get(pos * half + ic);
+        float fci = freqCisImag.get(pos * half + ic);
+
+        int qBase = batchIdx * qDim + h * headDim;
+        float v0q = qBatch.get(qBase + ic);
+        float v1q = qBatch.get(qBase + ic + half);
+        qBatch.set(qBase + ic, v0q * fcr - v1q * fci);
+        qBatch.set(qBase + ic + half, v0q * fci + v1q * fcr);
+
+        if (h < nHeadKv) {
+            int kBase = batchIdx * kvDim + h * headDim;
+            float v0k = kBatch.get(kBase + ic);
+            float v1k = kBatch.get(kBase + ic + half);
+            float rotK0 = v0k * fcr - v1k * fci;
+            float rotK1 = v0k * fci + v1k * fcr;
+            kBatch.set(kBase + ic, rotK0);
+            kBatch.set(kBase + ic + half, rotK1);
+
+            int cacheOff = batchIdx * slotStride + layerOff + pos * kvDim + h * headDim;
+            keyCache.set(cacheOff + ic, rotK0);
+            keyCache.set(cacheOff + ic + half, rotK1);
+            valueCache.set(cacheOff + ic, vBatch.get(kBase + ic));
+            valueCache.set(cacheOff + ic + half, vBatch.get(kBase + ic + half));
+        }
+    }
+
+    /** Batched NEOX RoPE for Q only (reuse-KV layers). Worker: B*nHeads*(headDim/2). */
+    public static void batchedGemmaDecodeRopeQOnly(KernelContext context,
+                                                   IntArray seqPositions, FloatArray qBatch,
+                                                   FloatArray freqCisReal, FloatArray freqCisImag,
+                                                   int nHeads, int headDim, int qDim) {
+        int half = headDim / 2;
+        int g = context.globalIdx;
+        int batchIdx = g / (nHeads * half);
+        int rem = g % (nHeads * half);
+        int h = rem / half;
+        int ic = rem % half;
+
+        int pos = seqPositions.get(batchIdx);
+        float fcr = freqCisReal.get(pos * half + ic);
+        float fci = freqCisImag.get(pos * half + ic);
+
+        int qBase = batchIdx * qDim + h * headDim;
+        float v0q = qBatch.get(qBase + ic);
+        float v1q = qBatch.get(qBase + ic + half);
+        qBatch.set(qBase + ic, v0q * fcr - v1q * fci);
+        qBatch.set(qBase + ic + half, v0q * fci + v1q * fcr);
+    }
 }

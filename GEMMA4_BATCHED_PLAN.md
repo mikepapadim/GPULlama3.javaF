@@ -26,8 +26,10 @@ before assembly (the safe path — the full forward isn't testable until near-co
 
 - [x] **batched sliding-window / full attention**, scale 1.0, per-slot KV, FP16 out —
   `batchedGemmaDecodeAttentionFP16Out` (validated bit-exact, windowed + full; `GemmaBatchedAttentionBench`)
-- [ ] batched **NEOX RoPE + per-slot KV write** (own-KV layers) + **RoPE-Q-only** (reuse-KV layers), per-layer freq tables (swa/full)
-- [ ] batched **per-head Q/K RMSNorm** (`rmsNormPerHead`) + **V norm** (`rmsNormPerHeadNoWeight`)
+- [x] batched **NEOX RoPE + per-slot KV write** (`batchedGemmaDecodeRopeNeox`) + **RoPE-Q-only**
+  (`batchedGemmaDecodeRopeQOnly`) — validated (Q/K/V maxRel 7e-5; `GemmaBatchedRopeNormBench`)
+- [x] batched **per-head Q/K RMSNorm** (`batchedGemmaPerHeadRmsNorm`) + **V norm**
+  (`batchedGemmaPerHeadRmsNormNoWeight`) — validated bit-exact
 - [ ] batched **pre/post RMSNorm** (`applyRmsNorm`) and **norm+residual** (`rmsNormApplyWithResidual`) — B rows
 - [ ] batched **GeGLU** gate/up (Q8) — gelu·(up), packed like `batchedFFNSwiGLUFP16Packed` but gelu
 - [ ] batched **PLE** tasks: `pleGateGeluMul`, `pleProjScaleAndNormalize`, `addAndScale`, `scaleInPlace`, `scaleInPlaceFromTensor`
