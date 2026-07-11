@@ -1,0 +1,139 @@
+package org.beehive.gpullama3.tornadovm.kernels;
+
+import uk.ac.manchester.tornado.api.KernelContext;
+import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+
+/**
+ * Batched-DECODE kernels for the Gemma 4 architecture (B independent sequences, one token/step,
+ * each with its own KV region). Gemma 4 differs from Llama/Qwen3 enough that its batched-decode
+ * layer graph needs its own kernels; this class collects the Gemma-specific ones as they are
+ * ported and validated against the single-token {@link Gemma4Kernels} reference.
+ *
+ * <p>Port status (see GEMMA4_BATCHED_PLAN.md):</p>
+ * <ul>
+ *   <li>[x] {@link #batchedGemmaDecodeAttentionFP16Out} — sliding-window / full attention, scale 1.0</li>
+ *   <li>[ ] batched NEOX RoPE + per-slot KV write (own-KV vs Q-only layers)</li>
+ *   <li>[ ] batched per-head Q/K/V RMSNorm</li>
+ *   <li>[ ] batched GeGLU (Q8 gate/up)</li>
+ *   <li>[ ] batched pre/post RMSNorm (+residual), PLE tasks, logit softcap</li>
+ * </ul>
+ */
+public final class Gemma4BatchDecodeKernels {
+
+    private Gemma4BatchDecodeKernels() {
+    }
+
+    /**
+     * Batched per-slot windowed flash attention, FP16 output (for the Q8 Wo MMA GEMM).
+     *
+     * <p>Mirrors {@link Gemma4Kernels#attentionWithSlidingWindow}: each (slot, head) attends over
+     * {@code t ∈ [max(0, pos-windowSize+1), pos]} of its own KV region, with Gemma's attention
+     * scale of {@code 1.0} (no {@code 1/sqrt(headDim)}). Full-attention layers pass
+     * {@code windowSize >= contextLength}. Query is FP32 ({@code qBatch}, already norm+RoPE'd),
+     * KV cache is FP32 and per-slot (stride {@code numLayers*contextLength*kvDim}); output is FP16.</p>
+     *
+     * <p>Requires headDim &le; 2*localSz (localSz = min(headDim, 128)); headDim &le; 256.</p>
+     *
+     * <p>Worker: B*nHeads workgroups × min(headDim,128) threads.</p>
+     */
+    public static void batchedGemmaDecodeAttentionFP16Out(KernelContext context,
+                                                          IntArray seqPositions,
+                                                          FloatArray qBatch,
+                                                          FloatArray keyCache,
+                                                          FloatArray valueCache,
+                                                          HalfFloatArray attnOutFP16,
+                                                          int nHeads, int headDim,
+                                                          int kvDim, int kvMul,
+                                                          int layerIndex, int numLayers,
+                                                          int contextLength, int windowSize, int qDim) {
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = seqPositions.get(batchIdx);
+        int windowStart = Math.max(0, pos - windowSize + 1);
+        int loff = batchIdx * (numLayers * contextLength * kvDim) + layerIndex * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_C = 16;
+
+        float[] qShared = context.allocateFloatLocalArray(256);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * 256);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * 256);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
+
+        int qOffset = batchIdx * qDim + h * headDim;
+        for (int i = tid; i < headDim; i += localSz) {
+            qShared[i] = qBatch.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+        float acc0 = 0.0f;
+        float acc1 = 0.0f;
+        int d1 = tid + localSz;
+
+        for (int tileC = windowStart; tileC <= pos; tileC += BLOCK_C) {
+            int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
+            int tileLen = tileEnd - tileC + 1;
+
+            for (int idx = tid; idx < tileLen * headDim; idx += localSz) {
+                int tInTile = idx / headDim;
+                int d = idx % headDim;
+                int kvOff = loff + (tileC + tInTile) * kvDim + kvHeadIdx * headDim + d;
+                kTile[tInTile * headDim + d] = keyCache.get(kvOff);
+                vTile[tInTile * headDim + d] = valueCache.get(kvOff);
+            }
+            context.localBarrier();
+
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                float score = 0.0f;
+                for (int d = 0; d < headDim; d++) {
+                    score += qShared[d] * kTile[tInTile * headDim + d];
+                }
+                sTile[tInTile] = score;                          // Gemma scale = 1.0
+            }
+            context.localBarrier();
+
+            float tileMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < tileLen; t++) {
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
+            }
+
+            float newMax = Math.max(maxScore, tileMax);
+            if (maxScore != Float.NEGATIVE_INFINITY && newMax != maxScore) {
+                float corr = TornadoMath.exp(maxScore - newMax);
+                sumExp *= corr;
+                acc0 *= corr;
+                acc1 *= corr;
+            }
+            maxScore = newMax;
+
+            for (int t = 0; t < tileLen; t++) {
+                float p = TornadoMath.exp(sTile[t] - maxScore);
+                sumExp += p;
+                acc0 += p * vTile[t * headDim + tid];
+                if (d1 < headDim) {
+                    acc1 += p * vTile[t * headDim + d1];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        int outOffset = batchIdx * qDim + h * headDim;
+        attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
+        if (d1 < headDim) {
+            attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        }
+    }
+}
