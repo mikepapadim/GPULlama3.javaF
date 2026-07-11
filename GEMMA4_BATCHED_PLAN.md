@@ -34,7 +34,7 @@ before assembly (the safe path — the full forward isn't testable until near-co
   (`batchedGemmaRmsNormApplyWithResidual`) — validated; reduce via existing `batchedRmsReduceParallel`
 - [x] batched **GeGLU** gate/up (`batchedGemmaGeGLUPacked`, gelu over packed Q8 gate/up) — validated
 - [x] elementwise `scaleInPlace` / `addAndScale` / `scaleInPlaceFromTensor` — reuse `Gemma4Kernels` as-is (flat, size = B·dim)
-- [ ] batched **PLE** tasks: `pleGateGeluMul`, `pleProjScaleAndNormalize` (per-layer-embedding)
+- [x] batched **PLE** tasks: `batchedGemmaPleGateGeluMul` + `batchedGemmaPleProjScaleAndNormalize` — validated bit-exact
 - [x] **logit softcap** — skipped for greedy (softcap is monotonic → argmax invariant; on-device argmax unaffected)
 
 Projections reuse the existing Q8 MMA GEMMs (`gemmMMAQ8`, `gemmMMAQKVQ8`, `gemmMMAGateUpQ8`).
@@ -61,5 +61,14 @@ on-device sampling) are model-agnostic and then apply unchanged.
 
 ## Status
 
-1 / ~15 kernels ported + validated. This is a multi-step port (comparable in size to a full
-model backend); progress is committed kernel-by-kernel with a passing microbench each.
+**All 10 new batched kernels ported + validated bit-exact** (attention, NEOX RoPE ×2,
+per-head norm ×2, GeGLU, RMSNorm-apply, norm+residual, PLE ×2); projections reuse the existing
+Q8 MMA GEMMs; elementwise ops reuse `Gemma4Kernels` as-is; softcap skipped for greedy. Each has
+a passing microbench (`GemmaBatched{Attention,RopeNorm,FFN,Ple}Bench`).
+
+**Remaining = assembly (the first end-to-end test point):**
+1. `Gemma4Q8LayersBatchDecodeMMA` — per-layer TaskGraph mirroring the single-token task order,
+   batched, with per-layer dims / sliding-window / shared-KV / PLE + a layer-0 PLE-setup graph.
+2. `Gemma4State`-backed batch buffers (host PLE per-token embedding gather into a batch buffer).
+3. `BatchedDecodeEngine` dispatch on `Gemma4Configuration` + batched logits (Q8 GEMM + on-device argmax).
+4. End-to-end debug vs the single-token reference (greedy → identical output).

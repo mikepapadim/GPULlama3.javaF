@@ -325,4 +325,59 @@ public final class Gemma4BatchDecodeKernels {
         int i = gid % dim;
         x.set(gid, x.get(gid) + weight.get(i) * (scaleBatch.get(b) * delta.get(gid)));
     }
+
+    // ── Per-layer embeddings (PLE, batched) ──────────────────────────────────
+
+    /**
+     * Batched PLE gate: {@code gate[b,i] = gelu(gate[b,i]) * perLayerInputs[b, peOffset+i]}.
+     * Fork of {@link Gemma4Kernels#pleGateGeluMul}; {@code size = nEmbdPerLayer},
+     * {@code perLayerTotal = numLayers*nEmbdPerLayer}. Worker: B*size threads.
+     */
+    public static void batchedGemmaPleGateGeluMul(KernelContext context, FloatArray gate, FloatArray perLayerInputs,
+                                                  int peOffset, int size, int perLayerTotal) {
+        int gid = context.globalIdx;
+        int b = gid / size;
+        int i = gid % size;
+        float g = gate.get(gid);
+        float g3 = g * g * g;
+        float gelu = 0.5f * g * (1.0f + TornadoMath.tanh(0.797885f * (g + 0.044715f * g3)));
+        gate.set(gid, gelu * perLayerInputs.get(b * perLayerTotal + peOffset + i));
+    }
+
+    /**
+     * Batched per-segment pre-scale + RMSNorm for the PLE model projection (layer-0 setup).
+     * Scratch is {@code [B][numLayers][segmentSize]}; one workgroup per (slot, segment). Fork of
+     * {@link Gemma4Kernels#pleProjScaleAndNormalize}. Worker: B*numLayers workgroups × localMem threads.
+     */
+    public static void batchedGemmaPleProjScaleAndNormalize(KernelContext context, FloatArray x, FloatArray weight,
+                                                            int numLayers, int segmentSize, int localMemSize,
+                                                            float preScale, float eps) {
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = context.localGroupSizeX;
+        int b = groupId / numLayers;
+        int seg = groupId % numLayers;
+        int base = b * (numLayers * segmentSize) + seg * segmentSize;
+
+        float[] localSum = context.allocateFloatLocalArray(64);
+        float partial = 0f;
+        for (int i = localId; i < segmentSize; i += localSize) {
+            float v = x.get(base + i) * preScale;
+            x.set(base + i, v);
+            partial += v * v;
+        }
+        localSum[localId] = partial;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+        float ss = 1.0f / TornadoMath.sqrt(localSum[0] / segmentSize + eps);
+        context.localBarrier();
+        for (int i = localId; i < segmentSize; i += localSize) {
+            x.set(base + i, weight.get(i) * (ss * x.get(base + i)));
+        }
+    }
 }
