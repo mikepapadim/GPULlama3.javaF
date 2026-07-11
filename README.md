@@ -125,6 +125,29 @@ We are at the early stages of Java entering the AI world with features added to 
 TornadoVM 4.0 includes a native [Metal](https://developer.apple.com/metal/) backend, enabling GPU-accelerated inference on Apple Silicon.
 
 -----------
+## ⚡ Batched decode & vLLM-style serving (experimental)
+
+An experimental GPU **batched-decode engine** (`bench/BatchedDecodeEngine`, CUDA backend) decodes
+**B independent sequences at once** — turning the bandwidth-bound single-token matvecs of decode
+into compute-bound tensor-core GEMMs (one weight read amortized across B tokens). On an RTX 4090
+(Llama-3.2-1B FP16) it reaches **~4200 tok/s aggregate at B=128 (≈41× single-stream)**, output
+verified bit-exact against the single-stream greedy reference. It ships the vLLM serving stack:
+
+| Feature | Effect |
+|---------|--------|
+| **Continuous (iteration-level) batching** | evict-on-stop + admit-from-queue; +20% throughput / +24% utilization vs static waves |
+| **PagedAttention** | block-pool KV + per-slot block table; ~10.7× less KV memory at ~1% overhead |
+| **Prefix caching** | shared prompt prefix prefilled once into pinned blocks; +85% throughput |
+| **On-device sampling** | GPU argmax → transfer B token ids not the 65 MB logits tensor; +30% throughput |
+| **CUDA graphs**, **logits-skip** | per-step launch-overhead + pure-prefill logits GEMM removed |
+
+Supported on **LLaMA** and **Qwen3** (FP16). See **[`BATCHED_DECODE.md`](BATCHED_DECODE.md)** for
+the design (with diagrams), per-model numbers, and exact reproduction prompts/flags;
+**[`GEMMA4_BATCHED.md`](GEMMA4_BATCHED.md)** for the Gemma 4 evaluation; and the
+[vLLM features roadmap](https://github.com/beehive-lab/GPULlama3.java/issues/130) for the
+feature/commit checklist.
+
+-----------
 ## 📦 Maven Dependency
 
 You can add **GPULlama3.java** directly to your Maven project by including the following dependency in your `pom.xml`:
@@ -281,6 +304,9 @@ jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf \
 
 ### Qwen 3 Collection 
 [https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/qwen-3-gpullama3java)
+
+### Gemma 4 Collection (BF16 / Q8_0)
+[https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF)
 
 ### Phi-3 Collection 
 [https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/phi-3-gpullama3java)
