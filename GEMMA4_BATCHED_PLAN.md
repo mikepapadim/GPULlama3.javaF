@@ -66,9 +66,22 @@ per-head norm ×2, GeGLU, RMSNorm-apply, norm+residual, PLE ×2); projections re
 Q8 MMA GEMMs; elementwise ops reuse `Gemma4Kernels` as-is; softcap skipped for greedy. Each has
 a passing microbench (`GemmaBatched{Attention,RopeNorm,FFN,Ple}Bench`).
 
-**Remaining = assembly (the first end-to-end test point):**
-1. `Gemma4Q8LayersBatchDecodeMMA` — per-layer TaskGraph mirroring the single-token task order,
-   batched, with per-layer dims / sliding-window / shared-KV / PLE + a layer-0 PLE-setup graph.
-2. `Gemma4State`-backed batch buffers (host PLE per-token embedding gather into a batch buffer).
-3. `BatchedDecodeEngine` dispatch on `Gemma4Configuration` + batched logits (Q8 GEMM + on-device argmax).
-4. End-to-end debug vs the single-token reference (greedy → identical output).
+**Kernels are complete and assembly-ready.** The target model's shape drove two extra kernel
+fixes, both done + validated:
+- **E2B geometry** (probed): dim 1536, 35 layers, nHeads 8, **nHeadKv 1**, headDim **256 (swa) /
+  512 (full)**, 20 shared-KV layers, sliding window 512, nEmbdPerLayer 256, ffn 6144, vocab
+  **262144**. Attention rewritten to handle **headDim ≤ 512** (4 register accumulators, 8×512
+  tiles) — re-validated bit-exact at 256 and 512.
+- **PLE weights are F32** (`perLayerInpGate`/`perLayerProj`) and F16 (`perLayerModelProj`); the
+  main projections + `wcls` are Q8_0. Added `batchedMatVecF32` / `batchedMatVecF16` for the PLE
+  projections (no MMA path for F32) and `batchedGemmaApplyRmsNormFP16` for the Q8-GEMM inputs.
+- **KV addressing** known: per-slot stride = `totalCacheElements` (single-seq, dedup'd), per-layer
+  base = `cacheLayerBaseOffset[l]` (reuse layers alias their source); attention/rope take
+  `(slotStride, layerBaseOff)`.
+
+**Remaining = engine assembly (the first end-to-end test point):** a `Gemma4BatchedDecodeEngine`
+mirroring the single-token task order batched — embed·√dim + layer-0 PLE setup (host-gather the
+per-token per-layer-embedding rows into a batch buffer), 35 layer graphs (Q8 MMA q/k/v/o/gate-up/
+down + the validated batched kernels; own-KV vs reuse-KV branch; swa/full freq tables + window),
+final RMS + Q8 logits GEMM + on-device argmax — then debug greedy vs the single-token reference.
+This is dense integration but every kernel it needs is validated; it is de-risked, not open-ended.
