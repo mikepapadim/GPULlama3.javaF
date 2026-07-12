@@ -135,7 +135,13 @@ public class Gemma4BatchedDecodeEngine {
                     seqPos.set(b, pos);
                 }
                 gatherPLE(prefill ? new int[]{prompt.get(step)} : cur, prefill);
-                for (int l = 0; l < nLayers; l++) execGraph(plan, gs, l, cudaGraphs);
+                for (int l = 0; l < nLayers; l++) {
+                    execGraph(plan, gs, l, cudaGraphs);
+                    if (step == 0 && Boolean.getBoolean("gemma.dbgL0") && (l == 0 || l == 13 || l == 14 || l == 15 || l == 25 || l == nLayers - 1)) {
+                        double mn = 1e30, mx = -1e30, ss = 0; for (int i = 0; i < dim; i++) { float v = wrapX.get(i); mn = Math.min(mn, v); mx = Math.max(mx, v); ss += v * v; }
+                        System.out.printf("[dbgL] L%d wrapX: min=%.3f max=%.3f rms=%.4f  (own-KV=%b)%n", l, mn, mx, Math.sqrt(ss / dim), config.hasOwnKv(l));
+                    }
+                }
                 if (!prefill || step == P - 1) {
                     execGraph(plan, gs, logitsIdx, cudaGraphs);
                     if (step == P - 1) {
@@ -282,6 +288,7 @@ public class Gemma4BatchedDecodeEngine {
             g.task(name + "_los", Gemma4Kernels::scaleInPlaceFromTensor, ctx, wrapX, w.layerOutputScale[l].asFloatArray(), B * dim);
             gs.addWorkerGrid(name + "." + name + "_los", ew(B * dim));
         }
+        if (Boolean.getBoolean("gemma.dbgL0")) g.transferToHost(DataTransferMode.EVERY_EXECUTION, wrapX);
         g.persistOnDevice(wrapX, keyCache, valCache, plInputs);
 
         // workers
