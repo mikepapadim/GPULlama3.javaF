@@ -274,10 +274,24 @@ public abstract class ModelLoader {
      */
     public static void copyEmbeddingRow(GGMLTensorEntry entry, long rowIndex, int rowSize, FloatTensor dest, int destOffset) {
         GGMLType type = entry.ggmlType();
+        MemorySegment segment = entry.memorySegment();
+        if (type == GGMLType.Q8_0) {
+            final int blockSize = GGMLType.Q8_0.getBlockSize();
+            final int typeSize = GGMLType.Q8_0.getTypeSize();
+            long rowStartElement = rowIndex * rowSize;
+            for (int i = 0; i < rowSize; i++) {
+                long globalElement = rowStartElement + i;
+                long blockOffset = (globalElement / blockSize) * typeSize;
+                int withinBlock = (int) (globalElement % blockSize);
+                float blockScale = Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, blockOffset));
+                byte quant = segment.get(ValueLayout.JAVA_BYTE, blockOffset + Short.BYTES + withinBlock);
+                dest.setFloat(destOffset + i, quant * blockScale);
+            }
+            return;
+        }
         if (type.getBlockSize() != 1) {
             throw new UnsupportedOperationException("copyEmbeddingRow only supports unblocked (per-element) types, got " + type);
         }
-        MemorySegment segment = entry.memorySegment();
         long elementBytes = type.getTypeSize();
         long rowByteOffset = rowIndex * rowSize * elementBytes;
         for (int i = 0; i < rowSize; i++) {

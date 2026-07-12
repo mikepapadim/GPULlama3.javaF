@@ -101,9 +101,13 @@ public class Gemma4BatchedDecodeEngine {
 
         if (Boolean.getBoolean("gemma.cpuRef")) {
             try {
-                var cpuState = model.createNewState();
-                int pp = 0;
-                for (int t : prompt) { model.forward(cpuState, t, pp++); }
+                Options cpu = new Options(options.modelPath(), options.prompt(), options.systemPrompt(), options.suffix(),
+                        false, options.temperature(), options.topp(), options.seed(), options.maxTokens(), false, false,
+                        false, false, 1);
+                Model cpuModel = loadModel(cpu);
+                var cpuState = cpuModel.createNewState();
+                int pp = 0, first = -1;
+                for (int t : prompt) { cpuModel.forward(cpuState, t, pp++); }
                 int am = 0; float best = -1e30f;
                 for (int i = 0; i < vocab; i++) { float v = cpuState.logits.getFloat(i); if (v > best) { best = v; am = i; } }
                 System.out.printf("[cpuref] argmax after prompt = %d  ('%s')%n", am, model.tokenizer().decode(List.of(am)));
