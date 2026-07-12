@@ -323,7 +323,9 @@ public final class Gemma4BatchDecodeKernels {
         int gid = context.globalIdx;
         int b = gid / dim;
         int i = gid % dim;
-        out.set(gid, new HalfFloat(weight.get(i) * (scaleBatch.get(b) * x.get(gid))));
+        float sc = scaleBatch.get(b);
+        float result = weight.get(i) * (sc * x.get(gid));
+        out.set(gid, new HalfFloat(result));
     }
 
     /**
