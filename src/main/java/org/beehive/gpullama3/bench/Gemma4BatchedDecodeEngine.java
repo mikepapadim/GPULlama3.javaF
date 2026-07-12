@@ -99,6 +99,17 @@ public class Gemma4BatchedDecodeEngine {
         System.out.printf("[gemma] B=%d ctx=%d P=%d n=%d dim=%d vocab=%d layers=%d slotStride=%d%n",
                 B, decodeCtx, P, nDecode, dim, vocab, nLayers, slotStride);
 
+        if (Boolean.getBoolean("gemma.cpuRef")) {
+            try {
+                var cpuState = model.createNewState();
+                int pp = 0;
+                for (int t : prompt) { model.forward(cpuState, t, pp++); }
+                int am = 0; float best = -1e30f;
+                for (int i = 0; i < vocab; i++) { float v = cpuState.logits.getFloat(i); if (v > best) { best = v; am = i; } }
+                System.out.printf("[cpuref] argmax after prompt = %d  ('%s')%n", am, model.tokenizer().decode(List.of(am)));
+            } catch (Throwable e) { System.out.println("[cpuref] failed: " + e); }
+        }
+
         allocate();
         GridScheduler gs = new GridScheduler();
         List<ImmutableTaskGraph> graphs = new ArrayList<>();
@@ -121,7 +132,16 @@ public class Gemma4BatchedDecodeEngine {
                 }
                 gatherPLE(prefill ? new int[]{prompt.get(step)} : cur, prefill);
                 for (int l = 0; l < nLayers; l++) execGraph(plan, gs, l, cudaGraphs);
-                if (!prefill || step == P - 1) execGraph(plan, gs, logitsIdx, cudaGraphs);
+                if (!prefill || step == P - 1) {
+                    execGraph(plan, gs, logitsIdx, cudaGraphs);
+                    if (step == P - 1) {
+                        double mn = 1e30, mx = -1e30, sum = 0; int nan = 0;
+                        for (int i = 0; i < vocab; i++) { float v = logits.get(i); if (Float.isNaN(v)) nan++; else { mn = Math.min(mn, v); mx = Math.max(mx, v); sum += v; } }
+                        System.out.printf("[dbg] logits slot0: min=%.3f max=%.3f mean=%.3f nan=%d argmax=%d%n", mn, mx, sum / vocab, nan, sampled.get(0));
+                        double wmn = 1e30, wmx = -1e30, wsum = 0; for (int i = 0; i < dim; i++) { float v = wrapX.get(i); wmn = Math.min(wmn, v); wmx = Math.max(wmx, v); wsum += v; }
+                        System.out.printf("[dbg] wrapX(final) min=%.3f max=%.3f mean=%.4f | embedType=%s%n", wmn, wmx, wsum / dim, w.getTokenEmbeddingTable().type());
+                    }
+                }
                 if (step >= P - 1) {
                     int s = step - (P - 1);
                     if (s < nDecode) for (int b = 0; b < B; b++) { cur[b] = sampled.get(b); streams[b][s] = cur[b]; }
@@ -245,11 +265,14 @@ public class Gemma4BatchedDecodeEngine {
         g.task(name + "_pfnrms", TransformerBatchPrefillKernels::batchedRmsReduceParallel, ctx, w2Out, scPFfn, dim, eps, RMS_LOCAL);
         g.task(name + "_pfnap", Gemma4BatchDecodeKernels::batchedGemmaRmsNormApplyWithResidual, ctx, wrapX, w2Out, w.ffnPostNorm[l].asFloatArray(), scPFfn, dim);
         // ── PLE ──
+        boolean noPle = Boolean.getBoolean("gemma.noPle");
+        if (!noPle) {
         g.task(name + "_plg", Gemma4BatchDecodeKernels::batchedMatVecF32, ctx, wrapX, w.perLayerInpGate[l].asFloatArray(), plGate, dim, nEmbdPerLayer);
         g.task(name + "_plgm", Gemma4BatchDecodeKernels::batchedGemmaPleGateGeluMul, ctx, plGate, plInputs, peOff, nEmbdPerLayer, perLayerTotal);
         g.task(name + "_plp", Gemma4BatchDecodeKernels::batchedMatVecF32, ctx, plGate, w.perLayerProj[l].asFloatArray(), plOut, nEmbdPerLayer, dim);
         g.task(name + "_pprms", TransformerBatchPrefillKernels::batchedRmsReduceParallel, ctx, plOut, scPle, dim, eps, RMS_LOCAL);
         g.task(name + "_ppap", Gemma4BatchDecodeKernels::batchedGemmaRmsNormApplyWithResidual, ctx, wrapX, plOut, w.perLayerPostNorm[l].asFloatArray(), scPle, dim);
+        }
         if (w.layerOutputScale[l] != null) {
             g.transferToDevice(DataTransferMode.FIRST_EXECUTION, w.layerOutputScale[l].asFloatArray());
             g.task(name + "_los", Gemma4Kernels::scaleInPlaceFromTensor, ctx, wrapX, w.layerOutputScale[l].asFloatArray(), B * dim);
@@ -288,11 +311,12 @@ public class Gemma4BatchedDecodeEngine {
         TaskGraph g = new TaskGraph(name);
         g.consumeFromDevice("L" + (nLayers - 1), ctx, wrapX);
         g.transferToDevice(DataTransferMode.FIRST_EXECUTION, ctx, normedFinal, scLog, sampled, w.wclsByteArray.asByteArray(), w.rms_final_weight_as_floatArray.asFloatArray());
+        g.transferToHost(DataTransferMode.EVERY_EXECUTION, wrapX);
         g.task(name + "_rms", TransformerBatchPrefillKernels::batchedRmsReduceParallel, ctx, wrapX, scLog, dim, eps, RMS_LOCAL);
         g.task(name + "_ap", Gemma4BatchDecodeKernels::batchedGemmaApplyRmsNormFP16, ctx, normedFinal, wrapX, w.rms_final_weight_as_floatArray.asFloatArray(), scLog, dim);
         g.task(name + "_vocab", TransformerBatchPrefillKernels::gemmMMAQ8, ctx, normedFinal, w.wclsByteArray.asByteArray(), logits, paddedB, vocab, dim);
         g.task(name + "_argmax", TransformerBatchPrefillKernels::batchedArgmaxLogits, ctx, logits, sampled, vocab);
-        g.transferToHost(DataTransferMode.EVERY_EXECUTION, sampled);
+        g.transferToHost(DataTransferMode.EVERY_EXECUTION, sampled, logits);
         gs.addWorkerGrid(name + "." + name + "_rms", gw(B * RMS_LOCAL, RMS_LOCAL));
         gs.addWorkerGrid(name + "." + name + "_ap", ew(B * dim));
         gs.addWorkerGrid(name + "." + name + "_vocab", mma(paddedB, vocab));
