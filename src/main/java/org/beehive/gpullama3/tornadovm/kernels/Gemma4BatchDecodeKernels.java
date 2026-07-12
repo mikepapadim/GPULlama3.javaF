@@ -63,11 +63,12 @@ public final class Gemma4BatchDecodeKernels {
         int windowStart = Math.max(0, pos - windowSize + 1);
         int loff = batchIdx * slotStride + layerBaseOff;
         int kvHeadIdx = h / kvMul;
-        int BLOCK_C = 16;
+        int BLOCK_C = 8;                                          // 8*512 tiles keep shared mem ~35 KB
 
-        float[] qShared = context.allocateFloatLocalArray(256);
-        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * 256);
-        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * 256);
+        // headDim up to 512 (Gemma full-attention layers), localSz = 128 → 4 output dims/thread.
+        float[] qShared = context.allocateFloatLocalArray(512);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * 512);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * 512);
         float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
 
         int qOffset = batchIdx * qDim + h * headDim;
@@ -78,9 +79,8 @@ public final class Gemma4BatchDecodeKernels {
 
         float maxScore = Float.NEGATIVE_INFINITY;
         float sumExp = 0.0f;
-        float acc0 = 0.0f;
-        float acc1 = 0.0f;
-        int d1 = tid + localSz;
+        float acc0 = 0.0f, acc1 = 0.0f, acc2 = 0.0f, acc3 = 0.0f;
+        int d1 = tid + localSz, d2 = tid + 2 * localSz, d3 = tid + 3 * localSz;
 
         for (int tileC = windowStart; tileC <= pos; tileC += BLOCK_C) {
             int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
@@ -116,18 +116,18 @@ public final class Gemma4BatchDecodeKernels {
             if (maxScore != Float.NEGATIVE_INFINITY && newMax != maxScore) {
                 float corr = TornadoMath.exp(maxScore - newMax);
                 sumExp *= corr;
-                acc0 *= corr;
-                acc1 *= corr;
+                acc0 *= corr; acc1 *= corr; acc2 *= corr; acc3 *= corr;
             }
             maxScore = newMax;
 
             for (int t = 0; t < tileLen; t++) {
                 float p = TornadoMath.exp(sTile[t] - maxScore);
                 sumExp += p;
-                acc0 += p * vTile[t * headDim + tid];
-                if (d1 < headDim) {
-                    acc1 += p * vTile[t * headDim + d1];
-                }
+                int vb = t * headDim;
+                acc0 += p * vTile[vb + tid];
+                if (d1 < headDim) acc1 += p * vTile[vb + d1];
+                if (d2 < headDim) acc2 += p * vTile[vb + d2];
+                if (d3 < headDim) acc3 += p * vTile[vb + d3];
             }
             context.localBarrier();
         }
@@ -135,9 +135,9 @@ public final class Gemma4BatchDecodeKernels {
         float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
         int outOffset = batchIdx * qDim + h * headDim;
         attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
-        if (d1 < headDim) {
-            attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
-        }
+        if (d1 < headDim) attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        if (d2 < headDim) attnOutFP16.set(outOffset + d2, new HalfFloat(acc2 * norm));
+        if (d3 < headDim) attnOutFP16.set(outOffset + d3, new HalfFloat(acc3 * norm));
     }
 
     // ── Per-head RMSNorm (batched) ───────────────────────────────────────────
@@ -317,6 +317,15 @@ public final class Gemma4BatchDecodeKernels {
         out.set(gid, weight.get(i) * (scaleBatch.get(b) * x.get(gid)));
     }
 
+    /** FP16-output pre-norm apply (the Q8 MMA GEMMs take a HalfFloatArray A operand). */
+    public static void batchedGemmaApplyRmsNormFP16(KernelContext context, HalfFloatArray out, FloatArray x,
+                                                    FloatArray weight, FloatArray scaleBatch, int dim) {
+        int gid = context.globalIdx;
+        int b = gid / dim;
+        int i = gid % dim;
+        out.set(gid, new HalfFloat(weight.get(i) * (scaleBatch.get(b) * x.get(gid))));
+    }
+
     /**
      * Batched sandwich-norm + residual: {@code x[b,i] += weight[i] * (scale[b] * delta[b,i])}.
      * Fork of {@link Gemma4Kernels#rmsNormApplyWithResidual}. Worker: B*dim threads.
@@ -382,5 +391,37 @@ public final class Gemma4BatchDecodeKernels {
         for (int i = localId; i < segmentSize; i += localSize) {
             x.set(base + i, weight.get(i) * (ss * x.get(base + i)));
         }
+    }
+
+    // ── Batched matvec for the mixed-precision PLE projections (thread per output) ──
+
+    /** {@code out[b,row] = Σ_i w[row,i]·x[b,i]}, row-major F32 weight [d,n]. Worker: B*d threads. */
+    public static void batchedMatVecF32(KernelContext context, FloatArray xBatch, FloatArray w,
+                                        FloatArray outBatch, int n, int d) {
+        int gid = context.globalIdx;
+        int b = gid / d;
+        int row = gid % d;
+        int wBase = row * n;
+        int xBase = b * n;
+        float acc = 0.0f;
+        for (int i = 0; i < n; i++) {
+            acc += w.get(wBase + i) * xBatch.get(xBase + i);
+        }
+        outBatch.set(gid, acc);
+    }
+
+    /** {@code out[b,row] = Σ_i w[row,i]·x[b,i]}, row-major F16 weight [d,n], F32 accumulate. Worker: B*d threads. */
+    public static void batchedMatVecF16(KernelContext context, FloatArray xBatch, HalfFloatArray w,
+                                        FloatArray outBatch, int n, int d) {
+        int gid = context.globalIdx;
+        int b = gid / d;
+        int row = gid % d;
+        int wBase = row * n;
+        int xBase = b * n;
+        float acc = 0.0f;
+        for (int i = 0; i < n; i++) {
+            acc += w.get(wBase + i).getFloat32() * xBatch.get(xBase + i);
+        }
+        outBatch.set(gid, acc);
     }
 }

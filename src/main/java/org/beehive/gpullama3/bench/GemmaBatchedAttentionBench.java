@@ -24,11 +24,11 @@ import java.util.Random;
 public class GemmaBatchedAttentionBench {
 
     static final int N_HEADS = 8;
-    static final int HEAD_DIM = 256;
+    static int HEAD_DIM = 256;
     static final int N_KV_HEADS = 2;
-    static final int KV_DIM = N_KV_HEADS * HEAD_DIM;     // 512
+    static int KV_DIM = N_KV_HEADS * HEAD_DIM;
     static final int KV_MUL = N_HEADS / N_KV_HEADS;      // 4
-    static final int Q_DIM = N_HEADS * HEAD_DIM;         // 2048
+    static int Q_DIM = N_HEADS * HEAD_DIM;
     static final int N_LAYERS = 1;
     static final int CTX = 1024;
     static final int LAYER = 0;
@@ -38,6 +38,9 @@ public class GemmaBatchedAttentionBench {
         int B = args.length > 0 ? Integer.parseInt(args[0]) : 32;
         int seqLen = args.length > 1 ? Integer.parseInt(args[1]) : 300;
         int windowSize = args.length > 2 ? Integer.parseInt(args[2]) : 128;   // < seqLen → exercise windowing
+        HEAD_DIM = args.length > 3 ? Integer.parseInt(args[3]) : 256;         // 256 (swa) / 512 (full)
+        KV_DIM = N_KV_HEADS * HEAD_DIM;
+        Q_DIM = N_HEADS * HEAD_DIM;
         Random rnd = new Random(11);
 
         FloatArray q = new FloatArray(B * Q_DIM);
