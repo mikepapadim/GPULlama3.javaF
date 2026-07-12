@@ -68,7 +68,7 @@ public class GemmaBatchedAttentionBench {
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, q, keyCache, valueCache, seqPos)
                 .task("attn", Gemma4BatchDecodeKernels::batchedGemmaDecodeAttentionFP16Out,
                         ctx, seqPos, q, keyCache, valueCache, xb,
-                        N_HEADS, HEAD_DIM, KV_DIM, KV_MUL, LAYER, N_LAYERS, CTX, windowSize, Q_DIM)
+                        N_HEADS, HEAD_DIM, KV_DIM, KV_MUL, LAYER * CTX * KV_DIM, N_LAYERS * CTX * KV_DIM, windowSize, Q_DIM)
                 .transferToHost(DataTransferMode.EVERY_EXECUTION, xb);
 
         try (TornadoExecutionPlan plan = new TornadoExecutionPlan(tg.snapshot())) {

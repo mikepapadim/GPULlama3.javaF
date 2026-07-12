@@ -48,8 +48,11 @@ public final class Gemma4BatchDecodeKernels {
                                                           HalfFloatArray attnOutFP16,
                                                           int nHeads, int headDim,
                                                           int kvDim, int kvMul,
-                                                          int layerIndex, int numLayers,
-                                                          int contextLength, int windowSize, int qDim) {
+                                                          int layerBaseOff, int slotStride,
+                                                          int windowSize, int qDim) {
+        // Gemma KV cache is per-slot (slotStride = single-seq total own-KV elements) with a
+        // per-layer base (layerBaseOff = cacheLayerBaseOffset[attnLayer]); reuse-KV layers pass
+        // the base of the layer whose cache they share. kvDim/headDim are per-layer.
         int tid = context.localIdx;
         int groupId = context.groupIdx;
         int localSz = context.localGroupSizeX;
@@ -58,7 +61,7 @@ public final class Gemma4BatchDecodeKernels {
         int h = groupId % nHeads;
         int pos = seqPositions.get(batchIdx);
         int windowStart = Math.max(0, pos - windowSize + 1);
-        int loff = batchIdx * (numLayers * contextLength * kvDim) + layerIndex * contextLength * kvDim;
+        int loff = batchIdx * slotStride + layerBaseOff;
         int kvHeadIdx = h / kvMul;
         int BLOCK_C = 16;
 
