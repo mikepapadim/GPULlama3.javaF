@@ -171,6 +171,15 @@ capped lower):
 | Llama-3.2-1B | 16 · 2048 · 128256 | 101 tok/s | 128 | 4175 tok/s | 41× |
 | Qwen3-1.7B   | 28 · 2048 · 151936 |  48 tok/s |  64 | 1433 tok/s | 30× |
 | Qwen3-4B     | 36 · 2560 · 151936 |  39 tok/s |  32 |  405 tok/s | 10× |
+| Mistral-7B-v0.3 | 32 · 4096 · 32768 | 27 tok/s |  32 |  331 tok/s | 12× |
+
+**Supported models: LLaMA, Qwen3, Mistral (FP16).** Mistral runs on the LLaMA decode path with
+no new kernels — the only generalizations were typing the layer graph to the base
+`Configuration` and parameterizing the RoPE theta (`config.ropeTheta()`, e.g. Mistral 1e6). Any
+LLaMA-family model (RMSNorm + SwiGLU + GQA + RoPE, no QK-norm, no sliding window) drops in the
+same way; the full serving stack (continuous + paging + prefix + on-device sampling) is
+model-agnostic and applies unchanged (Mistral-7B: 128-request continuous+paged+prefix →
+prefix-consistent, ~11.6× less KV, 82.8% fewer prefill tokens).
 
 All bit-exact vs the single-stream greedy reference (`all B streams identical: true`)
 and coherent.
