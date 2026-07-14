@@ -184,10 +184,10 @@ public class BatchedDecodeEngine {
         } else {
             LlamaFP16LayersBatchDecodeMMA l = paged
                     ? new LlamaFP16LayersBatchDecodeMMA((LlamaState) state, (LlamaTornadoWeights) weights,
-                        (LlamaConfiguration) config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions,
+                        config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions,
                         blockTable, blockSize, maxBlocksPerSlot)
                     : new LlamaFP16LayersBatchDecodeMMA((LlamaState) state, (LlamaTornadoWeights) weights,
-                        (LlamaConfiguration) config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions);
+                        config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions);
             layerITGs = l.getLayerImmutableTaskGraphs();
             lastLayerId = l.getLastLayerTaskGraphID();
             updateLayerSched = l::updateGridScheduler;
