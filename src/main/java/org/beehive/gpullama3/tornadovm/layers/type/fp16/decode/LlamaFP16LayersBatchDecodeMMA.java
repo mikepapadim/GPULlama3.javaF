@@ -2,7 +2,7 @@ package org.beehive.gpullama3.tornadovm.layers.type.fp16.decode;
 
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
+import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerBatchPrefillKernels;
 import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import uk.ac.manchester.tornado.api.GridScheduler;
@@ -42,7 +42,7 @@ public class LlamaFP16LayersBatchDecodeMMA {
 
     private final LlamaState state;
     private final LlamaTornadoWeights weights;
-    private final LlamaConfiguration config;
+    private final Configuration config;
     private final KernelContext context = new KernelContext();
     private final int batchSize;
     private final int paddedBatch;
@@ -59,7 +59,7 @@ public class LlamaFP16LayersBatchDecodeMMA {
     private String lastLayerTaskGraphID;
 
     public LlamaFP16LayersBatchDecodeMMA(LlamaState state, LlamaTornadoWeights weights,
-                                         LlamaConfiguration config, int batchSize, int decodeCtx,
+                                         Configuration config, int batchSize, int decodeCtx,
                                          FloatArray keyCacheBatch, FloatArray valueCacheBatch,
                                          IntArray seqPositions) {
         this(state, weights, config, batchSize, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions,
@@ -68,7 +68,7 @@ public class LlamaFP16LayersBatchDecodeMMA {
 
     /** Paged constructor: keyCacheBatch/valueCacheBatch are the shared block pools. */
     public LlamaFP16LayersBatchDecodeMMA(LlamaState state, LlamaTornadoWeights weights,
-                                         LlamaConfiguration config, int batchSize, int decodeCtx,
+                                         Configuration config, int batchSize, int decodeCtx,
                                          FloatArray keyCacheBatch, FloatArray valueCacheBatch,
                                          IntArray seqPositions,
                                          IntArray blockTable, int blockSize, int maxBlocksPerSlot) {
@@ -172,7 +172,7 @@ public class LlamaFP16LayersBatchDecodeMMA {
                     context, seqPositions, blockTable,
                     state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
                     kvDim, config.headSize(), layerIndex, config.numberOfLayers(),
-                    blockCfg, dim);
+                    blockCfg, dim, config.ropeTheta());
 
             g.task("batch_attention",
                     TransformerBatchPrefillKernels::batchedDecodePagedAttentionFP16Out,
@@ -188,7 +188,7 @@ public class LlamaFP16LayersBatchDecodeMMA {
                     context, seqPositions,
                     state.qkvResultBatch,
                     keyCacheBatch, valueCacheBatch,
-                    kvDim, config.headSize(), layerIndex, config.numberOfLayers(), decodeCtx, dim);
+                    kvDim, config.headSize(), layerIndex, config.numberOfLayers(), decodeCtx, dim, config.ropeTheta());
 
             g.task("batch_attention",
                     TransformerBatchPrefillKernels::batchedDecodeAttentionFP16Out,

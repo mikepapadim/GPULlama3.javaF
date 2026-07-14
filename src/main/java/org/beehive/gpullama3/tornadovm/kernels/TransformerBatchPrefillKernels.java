@@ -1658,7 +1658,7 @@ public final class TransformerBatchPrefillKernels {
                                                           FloatArray wrapValueCache,
                                                           int kvDim, int headSize,
                                                           int layerIndex, int numLayers,
-                                                          int contextLength, int dim) {
+                                                          int contextLength, int dim, float ropeTheta) {
         int globalIdx = context.globalIdx;
         int halfDim = dim / 2;
         int batchIdx = globalIdx / halfDim;
@@ -1673,7 +1673,7 @@ public final class TransformerBatchPrefillKernels {
 
         if (i + 1 < dim) {
             int head_dim = i % headSize;
-            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float freq = 1.0f / TornadoMath.pow(ropeTheta, head_dim / (float) headSize);
             float val = pos * freq;
             float fcr = TornadoMath.cos(val);
             float fci = TornadoMath.sin(val);
@@ -1830,7 +1830,7 @@ public final class TransformerBatchPrefillKernels {
                                                               FloatArray valuePool,
                                                               int kvDim, int headSize,
                                                               int layerIndex, int numLayers,
-                                                              int blockCfg, int dim) {
+                                                              int blockCfg, int dim, float ropeTheta) {
         int blockSize = blockCfg & 0xFFFF;
         int maxBlocksPerSlot = blockCfg >>> 16;
         int globalIdx = context.globalIdx;
@@ -1847,7 +1847,7 @@ public final class TransformerBatchPrefillKernels {
 
         if (i + 1 < dim) {
             int head_dim = i % headSize;
-            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float freq = 1.0f / TornadoMath.pow(ropeTheta, head_dim / (float) headSize);
             float val = pos * freq;
             float fcr = TornadoMath.cos(val);
             float fci = TornadoMath.sin(val);
