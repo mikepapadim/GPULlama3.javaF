@@ -49,6 +49,10 @@ refactored; rebasing them onto the refactor is more painful than the reverse.
 | #120 Gemma 4 | New arch; easier as a *provider* after phase 2 than merged before | Land, then migrate in phase 7 |
 | #132 Qwen3 rmsnorm race fix | Correctness baseline for bit-exact gate | Land first |
 
+**Land order** (D1): `#132 → #128 → #134 → #129`, then `#120` (→ migrate as an M2 provider) and
+`#137`. `#131` stays a findings doc (hybrid libs = parity for n=1 decode; do not merge as a feature).
+Full per-PR analysis in `VLLM-ALIGNMENT-AND-FEATURES.md` §3.
+
 **Exit gate P0**: `master` contains #129/#134/#132; `--bench` + `BATCHED_DECODE.md` verifies
 pass; captured as the **golden reference** (per-layer + final-logit dumps, per arch × dtype).
 
@@ -137,7 +141,9 @@ transfer lists inside the scheme. **Payoff proof**: adding a dummy scheme needs 
 | M3.2 | Collapse `Model.run{Interactive,InstructOnce,InstructOnceLangChain4J}` + all `if(useTornadovm)` into one engine loop | CLI + LangChain4j behavior unchanged |
 
 **Files**: new `runtime/exec/*`, `inference/InferenceCore*` (wrap), `tornadovm/TensorCoreSupport.java` → `DeviceCapabilities`, `model/Model.java` (thin the defaults).
-**Note**: reserves a future jam-style Vector-API/int8 CPU executor with zero engine changes.
+**Note**: reserves a future jam-style Vector-API/int8 CPU executor with zero engine changes. Also
+introduces a **pluggable attention-backend seam** (vLLM-derived) so a flash-attention decode kernel
+— a current gap — can drop in without touching model code.
 
 ---
 
@@ -156,6 +162,10 @@ agnostic core. **Decision D3**: package home → `runtime/engine/` (bench become
 **Files**: `runtime/engine/{LLMEngine,Scheduler,KVCacheManager,BlockPool,PrefixCache}.java`,
 `bench/BatchedDecodeEngine.java` (gut to a façade), `inference/sampler/*` (wire as strategy).
 **Risk**: highest. Gate each PR against the exact `BATCHED_DECODE.md` reproductions.
+**vLLM v1 alignment** (see `VLLM-ALIGNMENT-AND-FEATURES.md`): the `Scheduler` adopts **chunked
+prefill** (mix prefill+decode per step, retire the split plans); `KVCacheManager` gets a
+**`KVCacheSpec`** layout abstraction; split **EngineCore (sync) + async frontend** with
+persistent-batch buffer reuse.
 
 ---
 

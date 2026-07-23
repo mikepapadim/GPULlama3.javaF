@@ -5,7 +5,8 @@
 - **Baseline**: `main` @15ee2de
 - **Anchor issue**: #130 (vLLM-style serving roadmap)
 - **Companion docs**: [`MODULARIZATION_ROADMAP.md`](MODULARIZATION_ROADMAP.md) (PR-sized work),
-  [`QUANTSCHEME_SEAM_SCOPING.md`](QUANTSCHEME_SEAM_SCOPING.md) (dtype seam detail)
+  [`QUANTSCHEME_SEAM_SCOPING.md`](QUANTSCHEME_SEAM_SCOPING.md) (dtype seam detail),
+  [`VLLM-ALIGNMENT-AND-FEATURES.md`](VLLM-ALIGNMENT-AND-FEATURES.md) (vLLM v1 mapping, feature matrix, PR analysis)
 - **Peers**: llama.cpp · vLLM · qxotic
 
 > Turn a GPU-first LLM codebase into an embeddable, pluggable framework — **without regressing
@@ -133,6 +134,9 @@ freeze a reference for the bit-exact gate.
 - `#134` on-device sampling — becomes the `Sampler` strategy.
 - `#132` Qwen3 RMS-norm race fix — correctness baseline.
 - Add **ArchUnit** dependency rules + allowlist of current violations.
+- **Land order** (decision D1): `#132 → #128 → #134 → #129`, then `#120` and `#137`. `#131` stays a
+  findings doc (hybrid libs are parity for n=1 decode — do not merge as a feature). See
+  [`VLLM-ALIGNMENT-AND-FEATURES.md`](VLLM-ALIGNMENT-AND-FEATURES.md) §3.
 - **Exit**: per-layer + final-logit dumps captured per arch × dtype; `BATCHED_DECODE.md`
   reproductions pass.
 
@@ -164,7 +168,8 @@ the `detectModelType` chain and the `generateTokensLlama/Qwen3` copy-paste both 
 #### M3 — Executor / Backend seam — *layer 3*
 CPU and TornadoVM behind one `ForwardExecutor` + `Backend` / `Device` / `DeviceCapabilities` (from
 `TensorCoreSupport`). Wrap `tornadovm/plan/*` as `CompiledProgram`s; the three `Model` generate
-loops collapse into one.
+loops collapse into one. Introduce a **pluggable attention-backend seam** (vLLM-derived) so a
+flash-attention decode kernel — a current gap — can drop in without touching model code.
 - **Exit**: both paths bit-exact; capability query drives MMA gating; CLI + LangChain4j behavior
   unchanged.
 
@@ -172,6 +177,14 @@ loops collapse into one.
 Promote `bench/BatchedDecodeEngine` internals into a reusable, model/dtype/backend-agnostic core:
 `LLMEngine.addRequest()/step()` over `Scheduler` · `KVCacheManager` (contiguous + paged) ·
 `BlockPool` · `PrefixCache` · `Sampler`. One loaded model → many independent sessions.
+
+**Adopted from vLLM v1** (see [`VLLM-ALIGNMENT-AND-FEATURES.md`](VLLM-ALIGNMENT-AND-FEATURES.md) §1):
+- **Chunked prefill** — the `Scheduler` mixes prefill + decode tokens in one step, retiring the
+  separate prefill/decode plans (better utilisation, one code path).
+- **`KVCacheSpec`** — cache layout described independently of the model, inside `KVCacheManager`.
+- **EngineCore (sync) + async frontend** split — deterministic core for the bench, async frontend
+  for the M5 server; persistent-batch buffer reuse across steps.
+
 - **Exit**: paged ~10.7× less KV; continuous +20% throughput / +24% util; prefix +85% on
   shared-prefix batches — all vs bench parity.
 
@@ -318,6 +331,16 @@ flowchart TB
 > Every arrow is an **allowed** dependency. Only `backend/tornado` may import
 > `uk.ac.manchester.tornado.*`; `api`, `model`, `format` and `tokenizer` must not — enforced by
 > gate **G5**.
+
+### 5.3 Alignment with vLLM v1
+
+vLLM's v1 engine (`vllm/v1/{engine,core,worker,executor,sample,spec_decode,attention}`) maps almost
+1:1 onto these layers, which independently validates the design. Four gaps are folded in above —
+**chunked prefill** and **`KVCacheSpec`** (M4), **EngineCore + async frontend** (M4/M5), and a
+**pluggable attention-backend seam** for flash-attention (M3). Two remain explicit M6 payoff items:
+**low-bit quantization** (FP8/FP4, vLLM's Marlin/Machete analog — the M1b seam) and **speculative
+decoding**. Full mapping, the feature matrix, and the open-PR analysis live in
+[`VLLM-ALIGNMENT-AND-FEATURES.md`](VLLM-ALIGNMENT-AND-FEATURES.md).
 
 ---
 
