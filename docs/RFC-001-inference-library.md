@@ -6,7 +6,8 @@
 - **Anchor issue**: #130 (vLLM-style serving roadmap)
 - **Companion docs**: [`MODULARIZATION_ROADMAP.md`](MODULARIZATION_ROADMAP.md) (PR-sized work),
   [`QUANTSCHEME_SEAM_SCOPING.md`](QUANTSCHEME_SEAM_SCOPING.md) (dtype seam detail),
-  [`VLLM-ALIGNMENT-AND-FEATURES.md`](VLLM-ALIGNMENT-AND-FEATURES.md) (vLLM v1 mapping, feature matrix, PR analysis)
+  [`VLLM-ALIGNMENT-AND-FEATURES.md`](VLLM-ALIGNMENT-AND-FEATURES.md) (vLLM v1 mapping, feature matrix, PR analysis),
+  [`REFACTOR-EXECUTION-PLAN.md`](REFACTOR-EXECUTION-PLAN.md) (step-by-step, class-by-class)
 - **Peers**: llama.cpp · vLLM · qxotic
 
 > Turn a GPU-first LLM codebase into an embeddable, pluggable framework — **without regressing
